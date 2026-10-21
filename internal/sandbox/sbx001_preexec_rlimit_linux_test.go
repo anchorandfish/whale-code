@@ -39,6 +39,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // newSBX001Sandbox 构造已 Enter 的 linuxNamespaceSandbox（不启动任何进程）。
@@ -137,7 +139,7 @@ func TestSBX001_HelperSummonedWhenOnlyResourceLimits(t *testing.T) {
 // 传入**未启动**的 cmd（cmd.Process == nil），于是两条分支的结果必然不同：
 //
 //	走 prlimit 分支 ⇒ 必然返回 "cmd or process is nil" 错误
-//	走 no-op 分支  ⇒ 返回 nil
+//	走 no-op 分支 ⇒ 返回 nil
 //
 //	before 红：无分流逻辑 ⇒ 走 prlimit ⇒ 返回错误 ⇒ Fail
 //	反例注入：删掉 platformApplyResourceLimits 开头的分流判断 ⇒ 必须变红
@@ -199,8 +201,8 @@ func TestSBX001_EmptySpecStillRejected(t *testing.T) {
 // TestSBX001_E2E_HelperAppliesRlimitsBeforeExec 端到端（生产真实路径）。
 //
 // 与上面三条结构面判据的分工：
-//   - 结构面证明「信封带上了 / helper 被召唤了 / 兜底让路了」；
-//   - 本测试证明「helper 真的把限制设上了，且目标命令及其后代继承」。
+// - 结构面证明「信封带上了 / helper 被召唤了 / 兜底让路了」；
+// - 本测试证明「helper 真的把限制设上了，且目标命令及其后代继承」。
 //
 // 走的是生产同一条路径：wrapWithPreExecHelper（Restrict 内部调用它）
 // → 真实执行 → 在目标进程内读回 /proc/self/limits。
@@ -219,6 +221,12 @@ func TestSBX001_E2E_HelperAppliesRlimitsBeforeExec(t *testing.T) {
 	if _, err := os.Stat("/proc/self/limits"); err != nil {
 		t.Skipf("/proc 不可用，跳过 E2E: %v", err)
 	}
+	// 环境前提随失败一起打印（t.Log 在通过时静默，不污染输出）：
+	// RLIMIT_NPROC 是按 **UID** 统计的（内核 task 计数），不是按进程 ——
+	// 共享 runner 上其他并发测试进程也算在这个 UID 头上，且「把硬上限设到
+	// 比现有硬上限更高」会被内核拒绝。这两件事都会让本用例在 CI 上红，
+	// 但都不是「限制没在 execve 前施加」⇒ 必须先有环境证据，才能判真缺陷。
+	logAmbientProcLimits(t)
 
 	const (
 		// AS 用**生产默认值**（resource_enforce_common.go）：SBX-021 之后该值
@@ -279,6 +287,29 @@ func TestSBX001_E2E_HelperAppliesRlimitsBeforeExec(t *testing.T) {
 	// 该情形），故"压根不存在"也算通过 —— 本断言只抓"退役后又被偷偷施加回去"。
 	if v, ok := got["Max address space"]; ok && v == wantAS {
 		t.Errorf("Max address space = %d（=配置值）—— RLIMIT_AS 已在 Linux 退役（SBX-021），不应被施加", v)
+	}
+}
+
+// logAmbientProcLimits 打印本进程继承到的进程数上限与当前 cgroup pids 用量。
+//
+// 为什么需要（2026-10-22 CI 实测）：本用例在 CI 上红了，但注解里只有用例名 ——
+// 分不清「helper 没在 execve 前设限制」（真缺陷）与「runner 环境不允许把
+// RLIMIT_NPROC 设成 77」（环境前提不成立）。这两者的**判别证据**就是环境本身：
+// - ambient hard < want ⇒ setrlimit 会 EPERM（我们的值是"抬高硬上限"，非法）
+// - cgroup pids.current 已接近 want ⇒ fork 会 EAGAIN（不是 rlimit 的问题）
+func logAmbientProcLimits(t *testing.T) {
+	t.Helper()
+	var rl unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NPROC, &rl); err == nil {
+		t.Logf("env: ambient RLIMIT_NPROC soft=%d hard=%d uid=%d euid=%d",
+			rl.Cur, rl.Max, os.Getuid(), os.Geteuid())
+	} else {
+		t.Logf("env: Getrlimit(RLIMIT_NPROC) 失败: %v", err)
+	}
+	for _, p := range []string{"/sys/fs/cgroup/pids.current", "/sys/fs/cgroup/pids.max"} {
+		if b, err := os.ReadFile(p); err == nil {
+			t.Logf("env: %s=%s", p, strings.TrimSpace(string(b)))
+		}
 	}
 }
 

@@ -71,11 +71,12 @@ def main(path: str) -> int:
             name = head.group(1)
             failures.append(name)
             title = f"FAIL {name}"
-            # ★ 诊断行在 `--- FAIL` **之前**：Go 先打印 t.Errorf 的输出（缩进行），
-            #   最后才打 `--- FAIL: Name (0.00s)`。所以往里**回溯**收集，而不是往后。
-            #   （第一版就是往后取的：结果注解里只有一行 `--- FAIL`，诊断全丢 —— 用构造
-            #   日志跑判别时才发现。）
-            body: list[str] = []
+            # ★ 两个方向都要收，因为 Go 的两种输出模式顺序相反（2026-10-22 实测）：
+            #   go test（非 verbose，CI 用的就是这个）→ `--- FAIL` 在前、诊断行在后；
+            #   go test -v                              → 诊断行在前、`--- FAIL` 在后。
+            #   只收一个方向 = 另一种模式下注解里只剩一行 `--- FAIL`（第一版就是这样，
+            #   结果 CI 只告诉我们"有这个用例失败"，仍然不知道错在哪句）。
+            before: list[str] = []
             j = i - 1
             while j >= 0:
                 prev = lines[j]
@@ -83,10 +84,22 @@ def main(path: str) -> int:
                     break  # 上一条用例的开始/结束
                 if prev.strip() and not prev.startswith((" ", "\t")):
                     break  # 非缩进行：属于包级输出（panic/FAIL 行），不属于本条用例
-                body.append(prev.rstrip())
+                before.append(prev.rstrip())
                 j -= 1
-            body.reverse()
-            body.append(line.strip())
+            before.reverse()
+
+            after: list[str] = []
+            k = i + 1
+            while k < len(lines):
+                nxt = lines[k]
+                if not nxt.strip() or not nxt.startswith((" ", "\t")):
+                    break  # 缩进结束：诊断块到此为止
+                if BLOCK_END.match(nxt):
+                    break
+                after.append(nxt.rstrip())
+                k += 1
+
+            body = before + [line.strip()] + after
             # 去掉开头/结尾的空行，避免注解里挂一串空白
             while body and not body[0].strip():
                 body.pop(0)
