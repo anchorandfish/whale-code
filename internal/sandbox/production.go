@@ -93,9 +93,10 @@ func NewProductionSandboxManager(workDir string) Manager {
 		// 门 3：env 开启 → 过滤 "net"（NewManager 归一化，单一事实源）
 		osCfg.Linux.AllowNetwork = allowNetwork
 		// SBX-001：资源限制经 pre-exec helper 在 **execve 之前** setrlimit
-		//（RLIMIT_CPU/AS/NOFILE/NPROC/FSIZE）。与 :117 Darwin 同形：
-		// 复用同一 resLimits 实例，顶层（post-start 兜底）与 OSLevel.Linux
-		//（helper 主路径）同源同值，消除双源漂移。
+		//（实际施加 CPU/NOFILE/FSIZE；RLIMIT_AS 于 SBX-021 退役、RLIMIT_NPROC
+		// 于 SBX-022 退役，退役事实经 linuxRlimitDegradationNotice 申报）。
+		// 与 :117 Darwin 同形：复用同一 resLimits 实例，顶层（post-start 兜底）与
+		// OSLevel.Linux（helper 主路径）同源同值，消除双源漂移。
 		osCfg.Linux.ResourceLimits = resLimits
 	case "windows":
 		//

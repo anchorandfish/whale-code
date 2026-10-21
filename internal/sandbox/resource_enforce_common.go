@@ -43,6 +43,19 @@ type ResourceLimits struct {
 	// ProcessMax 进程数上限（0=不限制，防 fork bomb）。
 	// 与 validator.checkForkBomb 互补：checkForkBomb 静态检测 fork 炸弹 pattern；
 	// ProcessMax 运行时硬限制即使绕过静态检测的实际 fork 数。
+	//
+	// ⚠️ 平台差异（SBX-022，2026-10-22）—— **只有 Windows 真正使用本字段**：
+	// - Windows：Job Object 的 MaxProcesses（production.go），按**整个笼子**计量；
+	// - Linux：**已退役**。原走 RLIMIT_NPROC，但该限制的计量单位是「该**真实 UID**
+	// 在整机上持有的 task 总数（含线程）」，不是本进程额度 ⇒ 桌面/共享 UID 上
+	// （常态几百个 task）命令一 fork 就 `Cannot fork`。进程数门改由 cgroup v2
+	// `pids.max` 承担（SBX-019 路线，尚未落地）。退役事实经
+	// linuxRlimitDegradationNotice → AuditLog 对用户可见（不许静默）；
+	// - macOS：早已跳过 RLIMIT_NPROC（按 UID 计量，同理；见
+	// os_sandbox_darwin_rlimit.go 文件头）。
+	//
+	// ⇒ 在 Linux / macOS 上"本字段有值 ≠ 进程数门存在"。`Validate` 仍要求它 > 0，
+	// 是因为 Windows 需要它 —— **不要**据此在 Linux 上宣称进程数受限。
 	ProcessMax uint64
 
 	// FileSizeMaxBytes 单文件大小上限（字节，0=不限制）。
@@ -90,8 +103,10 @@ func DefaultResourceLimits() ResourceLimits {
 // ApplyResourceLimits 在 exec.Cmd 启动后应用资源限制（P1-1 导出）。
 //
 // 平台行为：
-// - Linux：通过 prlimit(pid, ...) 设置 RLIMIT_CPU/AS/NOFILE/NPROC/FSIZE
-// - Windows：依赖 Job Object（已在 os_sandbox_windows.go 实现 MemoryLimit）
+// - Linux：通过 prlimit(pid, ...) 设置 RLIMIT_CPU/NOFILE/FSIZE
+// （RLIMIT_AS 见 SBX-021、RLIMIT_NPROC 见 SBX-022：两者均已退役，
+// 退役事实经 linuxRlimitDegradationNotice 申报）
+// - Windows：依赖 Job Object（MemoryLimit / MaxProcesses 已在 os_sandbox_windows.go 实现）
 // - macOS/Darwin：降级为 no-op（Seatbelt profile limit 指令实现）
 // - 其他平台：no-op + AuditLog 记录
 //

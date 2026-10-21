@@ -272,7 +272,18 @@ func TestGuard_Attack_MemoryBombRLimitAS(t *testing.T) {
 // 桌面会话进程直接耗尽配额（sh: Cannot fork），无法测出攻击拦截。
 //
 // 结果断言：spawn 成功数 < 40（内核拒绝部分 fork）。
+//
+// ★ SBX-022：RLIMIT_NPROC 已在 Linux 侧**退役** —— 它按
+// **真实 UID** 的全机 task 总数计量（不是本进程额度），生产默认 256 会把
+// 桌面/共享 UID 上的命令直接饿死（CI 实证：`/usr/bin/sh: 1: Cannot fork`）。
+//
+// 本测试**刻意保留而不删除**：它记录了"按 UID 的进程数门确实能拦住 fork bomb"
+// 这一事实。等 cgroup v2 `pids.max`（SBX-019 路线）落地后，把本测试改写为
+// cgroup 版本即恢复其判别力（计量单位变成"本沙箱的 cgroup"，语义才对）。
 func TestGuard_Attack_ForkBombProcessLimit(t *testing.T) {
+	t.Skip("SBX-022：RLIMIT_NPROC 在 Linux 已退役（按 UID 全机 task 数计量，" +
+		"会饿死共享 UID 上的命令）；进程数门待 cgroup v2 pids.max（SBX-019 路线）落地后改写本测试")
+
 	if os.Geteuid() == 0 {
 		t.Skip("root 豁免 RLIMIT_NPROC（内核行为）；生产为非 root rootless 路径，请以普通用户运行验证")
 	}

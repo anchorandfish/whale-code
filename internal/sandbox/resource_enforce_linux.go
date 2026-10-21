@@ -104,10 +104,24 @@ func resourceLimitTargets(limits ResourceLimits) []resourceLimitTarget {
 	//
 	// 退役事实必须对用户可见（不许静默降级）⇒ linuxRlimitDegradationNotice
 	// 产出文案，由 Enter 记入 AuditLog（os_sandbox_linux.go 同位置）。
+	//
+	// ★ SBX-022：RLIMIT_NPROC 也已**退役**，同样刻意不在此表中。
+	//
+	// 退役理由（2026-10-22 CI 实证，不是预防性移除）：RLIMIT_NPROC 的计量单位是
+	// 「该**真实 UID** 在整机上持有的 task 总数（含线程）」，不是「本进程能开多少
+	// 子进程」。生产默认 ProcessMax=256 施加上去 = 宣称「我这个用户全机只许有
+	// 256 个 task」；桌面 Linux 用户常态就有几百个（浏览器/IDE/终端）⇒ 沙箱内
+	// 每条命令一 fork 就 EAGAIN：
+	// /usr/bin/sh: 1: Cannot fork （CI 注解：ambient NPROC soft/hard=58121, uid=1001）
+	//
+	// 调大只是把"饿死线"挪高（fork bomb 也能开更多）；改相对值（ambient+N）则把
+	// 「绝对上限」重定义成「增量」，用户以为的语义随时漂移 ⇒ 都是换症状。
+	// 进程数门改由 cgroup v2 `pids.max` 承担（计量单位是**本沙箱的 cgroup**，
+	// 语义正确；与内存门 `memory.max` 同一条路线 SBX-019，尚未落地）。
+	// 用户 2026-10-22 拍板方案 A。
 	return []resourceLimitTarget{
 		{unix.RLIMIT_CPU, limits.CPUMaxSeconds, "CPU"},
 		{unix.RLIMIT_NOFILE, limits.FileDescriptorMax, "NOFILE"},
-		{unix.RLIMIT_NPROC, limits.ProcessMax, "NPROC"},
 		{unix.RLIMIT_FSIZE, limits.FileSizeMaxBytes, "FSIZE"},
 	}
 }
@@ -139,8 +153,10 @@ func applyResourceLimitsToSelf(limits ResourceLimits) error {
 
 // linuxRlimitDegradationNotice 返回 Linux 资源门的**降级申报**文案（空串 = 无需申报）。
 //
-// SBX-021：RLIMIT_AS 在 Linux 侧退役（量纲错 + 误杀实证，见下方说明），
-// 该事实必须让用户可见，**不许静默**（静默防护教训，见 status.go 文件头）。
+// SBX-021：RLIMIT_AS 在 Linux 侧退役（量纲错 + 误杀实证）；SBX-022：RLIMIT_NPROC
+// 同样退役（按真实 UID 全机 task 总数计量 ⇒ 共享 UID 上把命令饿死）。
+// 这两件事必须让用户可见，**不许静默**（静默防护教训，见 status.go 文件头），
+// 也不许"一边宣称在施加、一边实际退役"。
 //
 // 位置选择：与 resourceLimitTargets 同文件 —— "施加"与"申报"的决策紧邻，
 // 避免将来改了一边忘另一边（型同语义双实现漂移）。
@@ -148,12 +164,14 @@ func applyResourceLimitsToSelf(limits ResourceLimits) error {
 // 与 os_sandbox_darwin.go:362-367（装配期 LogDegradation）。
 //
 // 触发条件与 darwin 一致（`!= ResourceLimits{}`）：只要配置声明了任何资源上限，
-// 就说明用户期望有资源门 —— 此时必须告知"其中 AS 未生效"，否则就是虚假保护感。
+// 就说明用户期望有资源门 —— 此时必须告知"其中哪几项未生效"，否则就是虚假保护感。
 func linuxRlimitDegradationNotice(limits ResourceLimits) string {
 	if limits == (ResourceLimits{}) {
 		return ""
 	}
-	return "linux rlimit: CPU/NOFILE/NPROC/FSIZE enforced via pre-exec helper; " +
-		"RLIMIT_AS retired on linux (limits virtual address space, not real usage — " +
-		"breaks Go/JVM builds; memory gate pending cgroup v2 memory.max, SBX-019)"
+	return "linux rlimit: CPU/NOFILE/FSIZE enforced via pre-exec helper; " +
+		"RLIMIT_AS and RLIMIT_NPROC retired on linux " +
+		"(AS limits virtual address space, not real usage — breaks Go/JVM builds; " +
+		"NPROC counts tasks per real UID, not per process — starves commands on a shared/desktop UID); " +
+		"memory/process gates pending cgroup v2 memory.max / pids.max (SBX-019)"
 }
