@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -209,7 +210,7 @@ func TestSBX001_EmptySpecStillRejected(t *testing.T) {
 // 目标是 sh 的**子进程** cat：它的 rlimit 承自 sh ⇒ 同时证明「限制随
 // execve 与 fork 继承」，这正是生产里"命令及其后代都受限"所依赖的性质。
 //
-// ★ 判别力来源：断言全部用**非默认值**（77 / 321 / 111 / 64MiB）。
+// ★ 判别力来源：断言全部用**非宿主默认值**（NPROC 见下方说明 / 321 / 111 / 64MiB）。
 // 宿主默认多为 unlimited 或系统级上限，两者必不相等。
 // 反例注入：删掉 RunPreExecHelper 的「第 6 步」（applyResourceLimitsToSelf
 // 调用）⇒ 目标读到宿主默认值 ⇒ 本测试变红。
@@ -232,11 +233,23 @@ func TestSBX001_E2E_HelperAppliesRlimitsBeforeExec(t *testing.T) {
 		// AS 用**生产默认值**（resource_enforce_common.go）：SBX-021 之后该值
 		// **不应**被施加到命令上 —— 这里保留它正是为了做反向断言（见函数末尾）。
 		wantAS     = 1 << 30
-		wantProcs  = 77
 		wantNofile = 321
 		wantCPU    = 111
 		wantFSIZE  = 64 << 20
 	)
+	// ★ NPROC 不能像其他三项那样写死一个小常量（2026-10-22 CI 实测）：
+	// 内核按**真实 UID** 统计 task 数（不是按进程），所以 RLIMIT_NPROC=77 的
+	// 真实含义是"本 UID 全机只许 77 个 task"。CI runner 上同一个 UID 早就有
+	// 上百个 task（`go test ./...` 并行包 + race 线程），于是 helper 起来后
+	// `sh` 一 fork 就 EAGAIN：
+	// /usr/bin/sh: 1: Cannot fork （exit 2，本用例红）
+	// 这与被测性质（限制是否在 execve 前施加）无关，是"测试把自己饿死了"。
+	// ⇒ 断言值取「当前 UID 已有 task 数 + 余量」：既远低于宿主默认值 58121
+	// （保持判别力：真没施加就会读到 58121），又不会掐死自己的 fork。
+	wantProcs, nprocOK := nprocWantForTest(t)
+	if !nprocOK {
+		return // 已在内部 Skip，给出原因
+	}
 	limits := ResourceLimits{
 		MemoryMaxBytes:    wantAS,
 		ProcessMax:        wantProcs,
@@ -255,8 +268,14 @@ func TestSBX001_E2E_HelperAppliesRlimitsBeforeExec(t *testing.T) {
 	}
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
-		t.Fatalf("helper 执行失败（可能 AS 上限自伤 Go helper，属真实缺陷）: %v\n--- 输出 ---\n%s",
-			runErr, out)
+		// 两类原因必须分开说，否则会把人骗去查错地方（2026-10-22 实证）：
+		// - "Cannot fork" ⇒ 进程配额（RLIMIT_NPROC / cgroup pids）不够，属环境或配置问题；
+		// - 其它（含 exec 报错）⇒ 才是 helper 自身装不上，属实现缺陷。
+		hint := "属实现缺陷"
+		if strings.Contains(string(out), "Cannot fork") || strings.Contains(string(out), "Resource temporarily unavailable") {
+			hint = "目标进程无法 fork：RLIMIT_NPROC 是**按 UID** 的绝对额度，当前 UID 已有 task 数超过它（环境/配置问题，不是 helper 没施加限制）"
+		}
+		t.Fatalf("helper 执行失败（%s）: %v\n--- 输出 ---\n%s", hint, runErr, out)
 	}
 
 	got := parseProcSelfLimits(string(out))
@@ -311,6 +330,83 @@ func logAmbientProcLimits(t *testing.T) {
 			t.Logf("env: %s=%s", p, strings.TrimSpace(string(b)))
 		}
 	}
+}
+
+// nprocWantForTest 给出本用例应当断言的 RLIMIT_NPROC 值（第二个返回值为 false 表示已 Skip）。
+//
+// 为什么不写死常量（2026-10-22 CI 实测）：RLIMIT_NPROC 由内核按**真实 UID** 统计
+// task 数，值是「这个 UID 全机还能有多少个 task」的**绝对上限**，不是"本进程额度"。
+// 写死 77 在单机单人环境能过，在 CI runner（同 UID 跑着并行测试包 + race 线程，
+// 实测 ambient soft/hard 均为 58121）上直接表现为 `/usr/bin/sh: 1: Cannot fork`，
+// 失败信息还长得像"产品缺陷"。
+//
+// 判据要的是「配置值是否真的被施加」，所以值只需满足两点：
+// 1. 与宿主默认值不同（否则"没施加"也会读到同一个数 ⇒ 假绿）；
+// 2. 高于当前 UID 的 task 数 + 余量（否则测试自己 fork 不了 ⇒ 假红）。
+//
+// 环境两条都不满足时只能 Skip（并说明），不能改成"断言 <= 某值"——那会失去判别力。
+func nprocWantForTest(t *testing.T) (uint64, bool) {
+	const slack = 1024 // 并行测试包在测量后仍可能新增线程；1024 远小于宿主默认值 58121
+	ambient, ok := ambientTaskCount()
+	if !ok {
+		// 数不出来就不敢断言（宁可 Skip，也不要用一个可能饿死自己的值）
+		t.Skip("无法统计当前 UID 的 task 数，不能安全选择 RLIMIT_NPROC 断言值")
+		return 0, false
+	}
+	want := uint64(ambient) + slack
+	var rl unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NPROC, &rl); err == nil &&
+		rl.Max != unix.RLIM_INFINITY && want >= rl.Max {
+		t.Skipf("当前 UID 的 task 数=%d，加余量后 %d 已不低于硬上限 %d，无法既施加又不自伤",
+			ambient, want, rl.Max)
+		return 0, false
+	}
+	return want, true
+}
+
+// ambientTaskCount 统计当前**真实 UID** 的 task 数（内核 RLIMIT_NPROC 的计数口径）。
+//
+// 逐个 /proc/<pid>/status 取 Uid 行比对，命中后数 /proc/<pid>/task/* ——
+// 直接按进程数统计会漏掉线程，而 NPROC 数的是 task。
+func ambientTaskCount() (int, bool) {
+	uid := os.Getuid()
+	pids, err := filepath.Glob("/proc/[0-9]*")
+	if err != nil || len(pids) == 0 {
+		return 0, false
+	}
+	total := 0
+	for _, pidDir := range pids {
+		b, err := os.ReadFile(filepath.Join(pidDir, "status"))
+		if err != nil {
+			continue // 进程已退出：正常竞态
+		}
+		if !statusBelongsToUID(string(b), uid) {
+			continue
+		}
+		tasks, err := filepath.Glob(filepath.Join(pidDir, "task", "[0-9]*"))
+		if err != nil {
+			continue
+		}
+		total += len(tasks)
+	}
+	return total, total > 0
+}
+
+// statusBelongsToUID 判断 /proc/<pid>/status 的 "Uid:" 行（四列：real/effective/saved/fs）
+// 的第一列是否等于 uid。
+func statusBelongsToUID(status string, uid int) bool {
+	for _, line := range strings.Split(status, "\n") {
+		if !strings.HasPrefix(line, "Uid:") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "Uid:"))
+		if len(fields) == 0 {
+			return false
+		}
+		n, err := strconv.Atoi(fields[0])
+		return err == nil && n == uid
+	}
+	return false
 }
 
 // parseProcSelfLimits 解析 /proc/self/limits 的「软限制」列。
