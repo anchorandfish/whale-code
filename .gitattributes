@@ -1,0 +1,30 @@
+# 换行符统一：库内一律 LF，工作区一律 LF
+# 目的：防止 Windows 侧 checkout 后全库转 CRLF，回传时产生"整篇文件都被改动"的假冲突
+* text=auto eol=lf
+*.go   text eol=lf
+*.md   text eol=lf
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.toml text eol=lf
+Makefile text eol=lf
+
+# Windows 脚本必须 CRLF，否则 cmd.exe 执行异常
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制：任何时候都不做换行转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.wasm binary
+*.pdf  binary
+*.test binary

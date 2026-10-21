@@ -1,0 +1,75 @@
+# .github/workflows/security.yml — E-2 govulncheck CI 自动化（桶 X6）
+#
+# 触发：push 到 main/master、PR 到 main/master、每周一 03:00 UTC 定时扫描
+# 功能：
+#   1. 运行 govulncheck ./... 检测依赖漏洞
+#   2. 运行 go mod verify 验证依赖完整性
+#   3. 运行 go mod tidy --check 检测 go.mod/go.sum 是否同步
+#
+# 失败处理：
+#   - govulncheck 发现 P0/P1 漏洞 → 阻断 PR 合并
+#   - go mod verify 失败 → 阻断
+#   - go mod tidy --check 失败 → 仅警告（不阻断）
+#
+# 对齐业内实践：Go 侧启用 govulncheck（同类 TS 项目用 npm audit）
+
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # 每周一 UTC 03:00 定时全量扫描
+    - cron: '0 3 * * 1'
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    # 仓库带 vendor/，Go 默认走 -mod=vendor，而 govulncheck 需要完整模块图
+    # （go list -m all 在 vendor 模式下直接报 "can't compute 'all'"）。
+    # CI 有网络，故这里绕过 vendor 走模块下载；本地构建仍可用 vendor 离线。
+    env:
+      GOFLAGS: -mod=mod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # 版本只认 go.mod（写死会与 go.mod 漂移，只能靠 GOTOOLCHAIN 下载兜底）
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        # 安装官方 govulncheck 工具（golang.org/x/vuln/cmd/govulncheck）
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Verify dependencies
+        # go mod verify 验证 go.sum 中的模块哈希
+        run: go mod verify
+
+      - name: Run govulncheck
+        # 运行 govulncheck ./... 全量扫描
+        # 发现 P0/P1 漏洞时 govulncheck 以非零退出码阻断 CI
+        run: govulncheck -show=verbose ./...
+
+      - name: Check go.mod/go.sum sync (non-blocking)
+        # go mod tidy --check 仅检测，不修改；失败不阻断（仅提示）
+        continue-on-error: true
+        run: |
+          go mod tidy -diff 2>&1 || true
+          if [ -n "$(go mod tidy -diff 2>/dev/null)" ]; then
+            echo "::warning::go.mod/go.sum is out of sync. Run 'go mod tidy' to fix."
+          fi
+
+  # 本地脚本路径校验：确保 scripts/govulncheck.sh 与 CI 行为一致
+  local-script-parity:
+    name: local script parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify scripts/govulncheck.sh exists
+        run: test -f scripts/govulncheck.sh

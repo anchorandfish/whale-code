@@ -1,0 +1,116 @@
+# === 敏感信息 ===
+.env
+.env.*
+!.env.example
+
+# 用户级敏感数据（settings.json 可能含 API Key，必须排除）
+**/settings.json
+**/settings.local.json
+**/.whale/
+**/secrets.json
+**/*.key
+**/*.pem
+**/credentials.json
+
+# === 编译产物 ===
+whale
+whale.exe
+*.exe
+*.test
+*.out
+*.vsix
+
+# === 临时/测试文件 ===
+*.txt
+!README.txt
+# Go vendor mode requires vendor/modules.txt to be tracked,
+# otherwise a clean clone fails with "inconsistent vendoring".
+!vendor/**/*.txt
+add.py
+_fix_test.py
+replace_batch*.py
+replace_group*.py
+replace_groups*.py
+scan_*.py
+test.py
+test_ci_hello.py
+.test-done
+build.bat
+coverage.txt
+coverage.html
+coverage.out
+*.log
+logs/
+testing/modules/
+testing/coverage.*
+testing/*.log
+testing/baseline.json
+testing/full-test-report.json
+testing/l2-summary.json
+*.exe~
+*.zip
+worktree_cover
+wt_cover
+
+# === 快照数据 ===
+.whale-snapshots/
+
+# === Go ===
+go.work
+go.work.sum
+
+# === Node ===
+node_modules/
+dist/
+out/
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === 文档临时文件 ===
+docs/full-test/
+docs/PendingWork/a3机进度记录/
+
+# === AI 测试产物（防止误提交）===
+*.test.exe
+ai.test.exe
+bash.test.exe
+command.test.exe
+diffutil.test.exe
+export.test.exe
+filehistory.test.exe
+image.test.exe
+concurrent_*.txt
+diff_*.txt
+difftest.txt
+c.txt
+
+# === 临时编译/测试目录（含本机路径泄漏风险）===
+.tmp_test/
+.whale-snapshots/
+
+# === 一次性 Python 批处理脚本（含本机路径，不提交）===
+replace_batch*.py
+replace_group*.py
+replace_groups*.py
+scan_*.py
+_fix_test.py
+add.py
+
+# === Trae IDE 内部数据（个人记忆，不提交）===
+trae_record/
+.trae/
+
+# === 历史快照与备份（个人开发记录）===
+*.bak
+*.bak.*
+
