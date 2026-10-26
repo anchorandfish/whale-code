@@ -238,16 +238,22 @@ func TestWebSocketTransport_NotificationDelivery(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// 发送一个通知
+		// 通知要等客户端发来第一条请求后再投递：
+		// 客户端一连上就开始读，而 SetNotificationHandler 是在 NewWebSocketTransport 之后才调的，
+		// 抢跑投递会被丢弃 ⇒ 用例只能靠"读到通知"超时判红（CI 上偶发）。
 		notifParams, _ := json.Marshal(map[string]interface{}{"progress": 50})
 		notif := fmt.Sprintf(`{"jsonrpc":"2.0","method":"notifications/progress","params":%s}`, string(notifParams))
-		conn.WriteMessage(websocket.TextMessage, []byte(notif))
+		sentNotif := false
 
 		// 继续处理请求
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				return
+			}
+			if !sentNotif {
+				sentNotif = true
+				conn.WriteMessage(websocket.TextMessage, []byte(notif))
 			}
 			var req struct {
 				ID     int64           `json:"id"`
@@ -276,14 +282,21 @@ func TestWebSocketTransport_NotificationDelivery(t *testing.T) {
 		}{method: method, params: params}
 	})
 
-	// 等待通知
+	// 先从客户端发一条请求：它保证 server 在 handler 就绪之后才投递通知（消除竞态）
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := transport.Send(ctx, 1, "ping", map[string]interface{}{}); err != nil {
+		t.Fatalf("Send 失败: %v", err)
+	}
+
+	// 等待通知（上界 15s：判据是"通知到了"，不是"机器多快"）
 	select {
 	case msg := <-notifReceived:
 		if msg.method != "notifications/progress" {
 			t.Errorf("通知方法 = %s, expected notifications/progress", msg.method)
 		}
-	case <-time.After(3 * time.Second):
-		t.Error("等待通知超时")
+	case <-time.After(15 * time.Second):
+		t.Fatal("等待通知超时")
 	}
 }
 

@@ -297,9 +297,20 @@ func TestMonitor_ProcessOutput(t *testing.T) {
 		t.Fatalf("expected status finished, got %s", status)
 	}
 
-	output := proc.GetOutput()
-	if !strings.Contains(output, "test_output_line") {
-		t.Fatalf("expected output to contain 'test_output_line', got: %s", output)
+	// 进程退出 ≠ 输出已经收完：管道读取/缓冲刷新可能略晚于 WaitForDone 返回，
+	// 读完即断言会把"机器此刻多快"变成判据（CI 上偶发空输出）。
+	// 给"输出到达"一个有界窗口；断言本身不变 —— 必须包含该行。
+	deadline := time.Now().Add(5 * time.Second)
+	var output string
+	for {
+		output = proc.GetOutput()
+		if strings.Contains(output, "test_output_line") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected output to contain 'test_output_line', got: %s", output)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
