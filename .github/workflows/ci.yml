@@ -57,7 +57,11 @@ jobs:
           #   测试一失败就会**在赋值之前**整步退出（第一次接注解时就是这么哑的：
           #   注解一条没出来，只剩 Actions 自己的 "exit code 1"）。
           rc=0
-          go test -count=1 -race ./... 2>&1 | tee /tmp/go-test.log || rc=$?
+          # `-p 2`：包级并发上限。race 下每个包本身就很吃 CPU，默认按核数铺开时
+          # 一批"等 N 秒"的用例会互相把对方挤过时限（同一份代码每次红的用例都不一样，
+          # 曾出现 bridge / mcp / tools 轮流出红）。限并发只是让计时类判据不被自己人
+          # 干扰；真正的竞态仍按用例逐个修（例如 WS 通知早于 handler、进程退出早于输出收齐）。
+          go test -count=1 -race -p 2 ./... 2>&1 | tee /tmp/go-test.log || rc=$?
           if [ "$rc" -ne 0 ]; then
             python3 .github/scripts/annotate_test_failures.py /tmp/go-test.log || true
             exit "$rc"
