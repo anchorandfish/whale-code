@@ -1,0 +1,148 @@
+name: Release
+
+# 两个触发入口：
+#   - push 本文件到 main（首次自动补发历史 tag 用）
+#   - 网页 Run workflow 手动指定任意已存在的 tag
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="v0.1.0"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      # 从 tag 检出，而不是从 main —— 保证二进制就是那个 tag 的源码，
+      # 不会因为 main 上多了 CI 文件而让版本号变成 v0.1.0-1-gxxxx。
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build all release binaries
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          mkdir -p dist
+          LDFLAGS="-s -w -buildid= -X github.com/anchorandfish/whale-code/internal/version.Version=${TAG}"
+          for target in windows/amd64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%%/*}"; arch="${target##*/}"
+            out="dist/whale-${os}-${arch}"
+            [ "$os" = "windows" ] && out="${out}.exe"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$out" .
+          done
+          ls -lh dist
+
+      # -X 包路径写错时链接器不报错、版本号静默留在源码默认值。
+      # 在 runner 原生平台真跑一次，把「静默失效」变成红灯。
+      - name: Verify injected version
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          out="$(./dist/whale-linux-amd64 --version)"
+          echo "$out"
+          echo "$out" | grep -qF "$TAG" || {
+            echo "::error::--version 未包含注入的版本 '$TAG'"
+            exit 1
+          }
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum whale-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          # notes 内联在 workflow 里：checkout 出来的工作区是 tag 的内容，
+          # 不会包含本文件所在 commit 新增的 notes 文件。
+          cat > /tmp/notes.md <<'NOTES'
+          First public build.
+
+          Whale Code is a coding agent for individual developers: you describe a task
+          in natural language, and it reads your code, edits files, and runs commands
+          under permission rules you control. State lives in `~/.whale`.
+
+          ## Downloads
+
+          | Platform | File |
+          |---|---|
+          | macOS (Apple Silicon) | `whale-darwin-arm64` |
+          | macOS (Intel) | `whale-darwin-amd64` |
+          | Linux (x86_64) | `whale-linux-amd64` |
+          | Linux (arm64) | `whale-linux-arm64` |
+          | Windows (x86_64) | `whale-windows-amd64.exe` |
+
+          All builds are `CGO_ENABLED=0` static binaries with no runtime dependencies.
+          Verify a download with `shasum -a 256 -c SHA256SUMS` (macOS) or
+          `sha256sum -c SHA256SUMS` (Linux).
+
+          ## Install
+
+          ```bash
+          chmod +x whale-darwin-arm64
+          xattr -d com.apple.quarantine ./whale-darwin-arm64   # macOS only: unsigned binary
+          mv whale-darwin-arm64 whale
+          ./whale
+          ```
+
+          First run asks for your provider and model, then writes `~/.whale/settings.json`.
+          Put the API key in the environment (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`);
+          it is never written to a file.
+
+          ## Requirements
+
+          - Nothing at runtime. Go 1.26.10+ only if you build from source.
+          - Linux sandboxing uses Landlock, which needs kernel ≥ 5.13.
+
+          ## Known limitations
+
+          - Windows has process isolation only (Job Object); filesystem write
+            restriction is not implemented yet.
+          - The mount namespace does not `pivot_root`, so host paths such as
+            `/var/run/docker.sock` remain visible to the sandboxed process.
+          NOTES
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — refreshing assets"
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file /tmp/notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "Whale Code $TAG" \
+              --notes-file /tmp/notes.md \
+              --verify-tag
+          fi
+          gh release view "$TAG" --json tagName,assets \
+            --jq '.tagName, (.assets[] | "\(.name)  \(.size)")'
