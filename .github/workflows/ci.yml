@@ -89,11 +89,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          VERSION="$(git describe --tags --always --dirty)"
+          RAW_VERSION="$(git describe --tags --always --dirty)"
+          # internal/version.Version 的契约是**不带 v**（展示层统一加 `Whale Code v` 前缀）。
+          # 直接注入 tag 原文会让二进制自称 `vv0.1.1` —— 发版时踩过一次，这里先剥前缀。
+          VERSION="${RAW_VERSION#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           # `git describe --always` 在没有 tag 时会退化成短提交号 —— 二进制会自称 "f822bde"。
           # 推 main 时忘了 `git push --follow-tags` 就是这个后果，所以显式喊一声。
-          case "$VERSION" in
+          case "$RAW_VERSION" in
             v*) ;;
             *) echo "::warning::没有打到当前提交的 tag，版本号退化为 '$VERSION'；发布请带 tag 推（git push --follow-tags）" ;;
           esac
@@ -114,10 +117,12 @@ jobs:
           set -euo pipefail
           out="$(./dist/whale-linux-amd64 --version)"
           echo "$out"
-          echo "$out" | grep -qF "$VERSION" || {
-            echo "::error::--version 未包含注入的版本 '$VERSION'（检查 -ldflags -X 的包路径）"
+          # 逐字相等，不用 `grep -qF`：包含式判定对"多一个 v"不敏感（`vv0.1.1` 里含 `v0.1.1`），
+          # 那种假绿正是发版件印出两个 v 的原因。
+          if [ "$out" != "Whale Code v${VERSION}" ]; then
+            echo "::error::--version 与注入值不一致：期望 'Whale Code v${VERSION}'，实际 '$out'（查 -ldflags -X 的包路径与 v 前缀）"
             exit 1
-          }
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
