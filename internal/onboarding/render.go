@@ -83,8 +83,40 @@ func appendBiBoxLine(lines []string, en, zh string) []string {
 	return lines
 }
 
+// sandboxClaimsFor 返回指定平台对应的沙箱卖点文案（英文主行、中文辅行）。
+//
+// 为什么按平台分支（W-121）：沙箱实现是平台相关的（macOS Seatbelt、Linux
+// Landlock + seccomp-BPF、Windows Job Object）。写死其中一个平台，等于对
+// 另外两个平台的用户陈述了错误事实 —— Linux 用户开机第一眼看到
+// "Windows-native"，与 README 的平台表直接矛盾。
+//
+// 参数化 goos 而非直接读 runtime.GOOS：让判据可以在任意平台上验证
+// "每个平台只说自己的话、不越界说别人的话"（否则测试只能在对应平台上跑）。
+func sandboxClaimsFor(goos string) (en, zh string) {
+	switch goos {
+	case "darwin":
+		return "  🍎 macOS: OS-level sandbox (Seatbelt)",
+			"  🍎 macOS：Seatbelt OS 级沙箱"
+	case "linux":
+		return "  🐧 Linux: OS-level sandbox (Landlock + seccomp-BPF)",
+			"  🐧 Linux：Landlock + seccomp-BPF OS 级沙箱"
+	case "windows":
+		return "  🪟 Windows-native: OS-level sandbox (Job Object)",
+			"  🪟 Windows 原生：CREATE_SUSPENDED+Job Object OS 级沙箱"
+	default:
+		// 未知平台：只说共性，不冒充任何具体实现。
+		return "  🛡 OS-level sandbox",
+			"  🛡 OS 级沙箱"
+	}
+}
+
+// sandboxClaims 返回当前运行平台对应的沙箱卖点文案。
+func sandboxClaims() (en, zh string) {
+	return sandboxClaimsFor(runtime.GOOS)
+}
+
 // renderDifferentiatedWelcome 渲染差异化首屏文案（D1-1 最小版）。
-// 突出 whale-code 三大卖点：本地优先 / H12 自我进化 / Windows 原生沙箱。
+// 突出 whale-code 三大卖点：本地优先 / H12 自我进化 / 平台对应的 OS 级沙箱。
 // 返回 UTF-8 字符串（box drawing 字符，内容区显示宽度 64 列）。
 //
 // 实现约束：
@@ -112,8 +144,8 @@ func (o *Onboarding) renderDifferentiatedWelcome() (out string) {
 	// 标题区（批 5：双语，中文副题降为缩进辅行）
 	lines = append(lines, buildWelcomeLine("  🐋 Welcome to Whale Code"))
 	lines = appendBiBoxLine(lines,
-		"  A learning, trustworthy, Windows-native coding companion",
-		"  会学习、可信任、Windows 原生的编码伙伴")
+		"  A learning, trustworthy, terminal coding companion",
+		"  会学习、可信任的终端编码伙伴")
 	lines = append(lines, sep)
 	// 卖点 1：本地优先
 	lines = appendBiBoxLine(lines,
@@ -137,10 +169,10 @@ func (o *Onboarding) renderDifferentiatedWelcome() (out string) {
 		"     · the longer you use it, the better it fits your project",
 		"     · 用得越久，whale 越懂你的项目")
 	lines = append(lines, buildWelcomeLine(""))
-	// 卖点 3：Windows 原生沙箱
-	lines = appendBiBoxLine(lines,
-		"  🪟 Windows-native: OS-level sandbox (Job Object)",
-		"  🪟 Windows 原生：CREATE_SUSPENDED+Job Object OS 级沙箱")
+	// 卖点 3：OS 级沙箱（文案按平台分支，见 sandboxClaimsFor）
+	// W-121：原实现把 Windows 的 Job Object 写死，Linux/macOS 用户首屏被误导。
+	sandboxEN, sandboxZH := sandboxClaims()
+	lines = appendBiBoxLine(lines, sandboxEN, sandboxZH)
 	lines = appendBiBoxLine(lines,
 		"     · deny-wins rule + plugin verification fail-closed",
 		"     · deny-wins 铁律 + 插件验签 fail-closed")

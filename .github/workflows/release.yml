@@ -1,19 +1,18 @@
 name: Release
 
 # 两个触发入口：
-#   - push 本文件到 main（首次自动补发历史 tag 用）
-#   - 网页 Run workflow 手动指定任意已存在的 tag
+#   - 推 tag（v*）自动发版 —— 常规发版只走这一条
+#   - 网页 Run workflow 手动补发任意历史 tag（补票用，不影响自动路径）
 on:
   push:
-    branches: [main]
-    paths:
-      - '.github/workflows/release.yml'
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to publish (e.g. v0.1.0)'
+        description: 'Existing tag to publish (e.g. v0.2.0)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.1.1'
 
 permissions:
   contents: write
@@ -29,7 +28,8 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
-            TAG="v0.1.0"
+            # tag push：直接用被推的 tag 名，不再硬编码版本号
+            TAG="${{ github.ref_name }}"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Resolved tag: $TAG"
@@ -49,8 +49,12 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
+          # internal/version.Version 的契约是 `x.y.z`（不带 v），展示层自己加前缀。
+          # tag 名是 vX.Y.Z，若原样注入，输出会变成 "Whale Code vvX.Y.Z"。
+          VERSION="${TAG#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           mkdir -p dist
-          LDFLAGS="-s -w -buildid= -X github.com/anchorandfish/whale-code/internal/version.Version=${TAG}"
+          LDFLAGS="-s -w -buildid= -X github.com/anchorandfish/whale-code/internal/version.Version=${VERSION}"
           for target in windows/amd64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os="${target%%/*}"; arch="${target##*/}"
             out="dist/whale-${os}-${arch}"
@@ -60,18 +64,22 @@ jobs:
           done
           ls -lh dist
 
-      # -X 包路径写错时链接器不报错、版本号静默留在源码默认值。
-      # 在 runner 原生平台真跑一次，把「静默失效」变成红灯。
+      # 这道门要能判别两种真实故障，缺一不可：
+      #  ① -X 的包路径写错 —— 链接器不报错，版本静默留在源码默认值；
+      #  ② 注入值带了 v 前缀 —— 输出 "Whale Code vv0.1.0"。
+      # 用 `grep -qF "$TAG"` 判会假绿：'vv0.1.0' 里确实含有 'v0.1.0'。
+      # 所以必须全等比较，而不是「包含」。
       - name: Verify injected version
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.tag }}"
+          expected="Whale Code v${VERSION}"
           out="$(./dist/whale-linux-amd64 --version)"
-          echo "$out"
-          echo "$out" | grep -qF "$TAG" || {
-            echo "::error::--version 未包含注入的版本 '$TAG'"
+          echo "expected: ${expected}"
+          echo "actual  : ${out}"
+          if [ "${out}" != "${expected}" ]; then
+            echo "::error::--version 与注入值不符（期望 '${expected}'，实际 '${out}'）"
             exit 1
-          }
+          fi
 
       - name: Checksums
         working-directory: dist
