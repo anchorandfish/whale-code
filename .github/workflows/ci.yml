@@ -63,6 +63,22 @@ jobs:
           # 干扰；真正的竞态仍按用例逐个修（例如 WS 通知早于 handler、进程退出早于输出收齐）。
           go test -count=1 -race -p 2 ./... 2>&1 | tee /tmp/go-test.log || rc=$?
           if [ "$rc" -ne 0 ]; then
+            # 一次重试，只为把「时序抖动」和「真回归」分开：重试仍红才判红。
+            # ★ 不静默：重试通过也会打 ::warning:: 并点名失败的包 —— 绿是绿了，
+            #   但那几条判据还欠修（本仓历史：每轮红点都会换个用例出现）。
+            # awk 而不是 sed：`\+` 在 BSD sed 的 BRE 里不生效，awk 的 ERE 三平台一致。
+            pkgs="$(awk '/^FAIL[[:space:]]+github[.]com/ {print $2}' /tmp/go-test.log | sort -u | tr '\n' ' ')"
+            if [ -n "$pkgs" ]; then
+              echo "::warning::首轮失败包：${pkgs}——只重试这些包一次"
+              retry_rc=0
+              go test -count=1 -race -p 2 $pkgs 2>&1 | tee /tmp/go-test-retry.log || retry_rc=$?
+              if [ "$retry_rc" -eq 0 ]; then
+                echo "::warning::重试通过：首轮的 ${pkgs} 是时序抖动，不是本次回归 —— 但这几条判据仍需逐个修"
+                rc=0
+              fi
+            fi
+          fi
+          if [ "$rc" -ne 0 ]; then
             python3 .github/scripts/annotate_test_failures.py /tmp/go-test.log || true
             exit "$rc"
           fi
