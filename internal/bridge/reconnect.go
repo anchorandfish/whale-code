@@ -162,6 +162,9 @@ func (rm *ReconnectManager) Stop() {
 // - ctx 取消时立即返回 ReconnectResult{Err: ctx.Err()}
 // - goroutine 退出时：inflight=false + 调 onComplete（不传 token，优化 4）
 //
+// 顺序不变量：终局通知先发、结果后交付 —— 否则消费者补发的"验签失败"通知可能先到，
+// IDE 以最后一条为准 ⇒ 停在假成功。
+//
 // 防御性（吸纳审查优化 4/5）：
 // - defer recover() 防回调 panic 影响 goroutine
 // - refreshToken 为 nil 时立即返回错误（B2 修复延续）
@@ -177,14 +180,15 @@ func (rm *ReconnectManager) ReconnectOnAuthErrorAsync(ctx context.Context) <-cha
 	refreshFn := rm.refreshToken
 	rm.mu.Unlock()
 	if refreshFn == nil {
+		err := ai.WithID(fmt.Errorf("reconnect failed: refreshToken callback not configured"), ai.ErrBridgeReconnect)
+		// 终局通知先于交付（不变量见下方注释）
+		rm.finishAsyncReconnect(false, err)
 		resultCh <- ReconnectResult{
-			Err:     ai.WithID(fmt.Errorf("reconnect failed: refreshToken callback not configured"), ai.ErrBridgeReconnect),
+			Err:     err,
 			Attempt: 0,
 			TotalMs: 0,
 		}
 		close(resultCh)
-		// 仍需清理 inflight + 调回调（保持状态一致）
-		rm.finishAsyncReconnect(false, ai.WithID(fmt.Errorf("reconnect failed: refreshToken callback not configured"), ai.ErrBridgeReconnect))
 		return resultCh
 	}
 
@@ -195,13 +199,14 @@ func (rm *ReconnectManager) ReconnectOnAuthErrorAsync(ctx context.Context) <-cha
 		defer func() {
 			if r := recover(); r != nil {
 				err := ai.WithID(fmt.Errorf("reconnect goroutine panic: %v", r), ai.ErrBridgeReconnect)
+				// 终局通知先于交付（不变量见下方注释）
+				rm.finishAsyncReconnect(false, err)
 				resultCh <- ReconnectResult{
 					Err:     err,
 					Attempt: 0,
 					TotalMs: time.Since(startTime).Milliseconds(),
 				}
 				close(resultCh)
-				rm.finishAsyncReconnect(false, err)
 			}
 		}()
 
@@ -278,11 +283,19 @@ func (rm *ReconnectManager) ReconnectOnAuthErrorAsync(ctx context.Context) <-cha
 		} else {
 			result.Err = ai.WithID(fmt.Errorf("reconnect failed: %w", lastErr), ai.ErrBridgeReconnect)
 		}
+
+		// ★ 不变量：终局通知必须**先于**结果交付。
+		//
+		// 消费者（AuthProvider.runAsyncReconnect）拿到结果后会去验签新 token；
+		// 验签失败时它要补发一条 NotifyReconnectFailure(false, err) 覆盖这里的 success
+		// （X3 病灶5：不能让 IDE 停在假成功）。若"交付"先于"通知"，这两条通知就分属
+		// 两个 goroutine、中间没有任何同步点 —— 补发的失败可能先到，IDE 以最后一条为准
+		// ⇒ 又变回"重连成功"。用程序顺序把终局通知钉死在前面，顺序就不再靠调度运气。
+		//
+		// 代价：onComplete 回调期间结果尚未交付，回调实现必须保持快速、不得阻塞等待。
+		rm.finishAsyncReconnect(lastErr == nil, result.Err)
 		resultCh <- result
 		close(resultCh)
-
-		// 通知回调 + 清理 inflight（优化 3/4）
-		rm.finishAsyncReconnect(lastErr == nil, result.Err)
 	}()
 
 	return resultCh
