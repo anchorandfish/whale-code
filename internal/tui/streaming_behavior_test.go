@@ -45,11 +45,19 @@ func TestFrameLimiter7msThrottle(t *testing.T) {
 		t.Fatal("等待 8ms 后 ShouldRender 应为 true（8ms >= 7ms），got false；原 8.33ms 会导致此处 false")
 	}
 
-	// 4. MarkEmitted 后等待 3ms，ShouldRender 必须为 false（3ms < 7ms，余量 4ms 防 flaky）
-	fl.MarkEmitted()
-	time.Sleep(3 * time.Millisecond)
-	if fl.ShouldRender() {
-		t.Fatal("等待 3ms 后 ShouldRender 应为 false（3ms < 7ms），got true")
+	// 4. 小于 minInterval 时必须节流。
+	//
+	// 原写法是"MarkEmitted 后睡 3ms，断言仍是 false（3ms < 7ms）" —— 这条断言实际在断
+	// "这台机器 sleep(3ms) 一定不会拖过 7ms"，把 CPU 争抢当成了判据；CI 上真的因此红过
+	// （got true：3ms 的 sleep 在负载下被拖到 7ms 以上）。改成把间隔放大到 1 小时：
+	// 断言的是"elapsed < minInterval ⇒ 不渲染"这条逻辑本身，与机器快慢无关。
+	slow := &FrameLimiter{minInterval: time.Hour}
+	if !slow.ShouldRender() {
+		t.Fatal("首次 ShouldRender 应为 true（lastEmit.IsZero 短路），got false")
+	}
+	slow.MarkEmitted()
+	if slow.ShouldRender() {
+		t.Fatal("小于 minInterval 时 ShouldRender 应为 false，got true")
 	}
 }
 
