@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -271,6 +272,11 @@ func runServer(stdin io.Reader, stdout io.Writer) {
 			continue
 		}
 		if req.ID > 0 {
+			// 工具名含 "hang"：故意**不回包**，用于构造确定性超时。
+			// 有了这条路径，超时用例不必再赌"回包和超时谁先就绪"。
+			if req.Method == "tools/call" && strings.Contains(string(req.Params), "hang") {
+				continue
+			}
 			result := handleRequest(req.Method, req.Params)
 			resultJSON, _ := json.Marshal(result)
 			resp := fmt.Sprintf(` + "`" + `{"jsonrpc":"2.0","id":%d,"result":%s}` + "`" + `, req.ID, string(resultJSON))
@@ -833,22 +839,27 @@ func TestMCPClientNewClientFailure(t *testing.T) {
 }
 
 // TestClient_Timeout 测试 MCP 调用在 context 超时时返回错误
+//
+// 判据设计：旧版给 1ns 超时、同时让 mock server 正常回包。产品的等待是
+// select 里同时挂「收到回包」与「ctx.Done()」两个分支（transport_stdio.go），
+// **两个分支同时就绪时 Go 随机挑一个** ⇒ 只要回包先落到 channel，这次就返回成功、用例红
+// （CI 上确实这样红过："expected超时返回错误，但得到 nil"）。
+// 现在改为调用 "hang"（mock server 收到请求但**永不回包**），ctx 成为唯一出路 ⇒ 确定性。
 func TestClient_Timeout(t *testing.T) {
 	client, cleanup := startMockServer(t)
 	defer cleanup()
 
-	// 创建一个极短超时的 context，使请求几乎必定超时
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	// 等待超时生效
-	time.Sleep(1 * time.Millisecond)
-
-	_, err := client.CallTool(ctx, "echo", map[string]interface{}{
-		"message": "should timeout",
+	_, err := client.CallTool(ctx, "hang", map[string]interface{}{
+		"message": "server never replies",
 	})
 	if err == nil {
-		t.Error("expected超时返回错误，但得到 nil")
+		t.Fatal("context 超时后必须返回错误，实际得到 nil（server 没回包却当成功 = 调用方会挂死）")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("错误应满足 errors.Is(err, context.DeadlineExceeded)，实际: %v", err)
 	}
 }
 
