@@ -238,8 +238,8 @@ func TestWebSocketTransport_NotificationDelivery(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// 通知要等客户端发来第一条请求后再投递：
-		// 客户端一连上就开始读，而 SetNotificationHandler 是在 NewWebSocketTransport 之后才调的，
+		// 通知要等客户端发来第一条请求后再投递 —— 客户端一连上就开始读，
+		// 而 SetNotificationHandler 是 NewWebSocketTransport 返回之后才调的，
 		// 抢跑投递会被丢弃 ⇒ 用例只能靠"读到通知"超时判红（CI 上偶发）。
 		notifParams, _ := json.Marshal(map[string]interface{}{"progress": 50})
 		notif := fmt.Sprintf(`{"jsonrpc":"2.0","method":"notifications/progress","params":%s}`, string(notifParams))
@@ -282,7 +282,7 @@ func TestWebSocketTransport_NotificationDelivery(t *testing.T) {
 		}{method: method, params: params}
 	})
 
-	// 先从客户端发一条请求：它保证 server 在 handler 就绪之后才投递通知（消除竞态）
+	// 先从客户端发一条请求 —— 它保证 server 在 handler 就绪之后才投递通知
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := transport.Send(ctx, 1, "ping", map[string]interface{}{}); err != nil {

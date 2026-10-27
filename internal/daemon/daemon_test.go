@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/anchorandfish/whale-code/internal/testutil"
 )
 
 // ========== PID 文件管理测试 ==========
@@ -947,34 +949,19 @@ func TestDaemonStartupNormal(t *testing.T) {
 		startErr <- d.Start()
 	}()
 
-	// Channel-based wait: poll IsReady until ready or timeout
-	ready := make(chan struct{}, 1)
-	go func() {
-		for i := 0; i < 50; i++ {
-			if IsReady(pidPath) {
-				ready <- struct{}{}
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-
-	select {
-	case <-ready:
-		// Daemon started successfully within timeout
-	case err := <-startErr:
-		if err != nil {
-			t.Fatalf("Daemon start failed: %v", err)
-		}
+	// ★ 2026-10-27 ：原来是「起一个 goroutine 每 100ms 轮询 IsReady，再用 select 等它」——
+	// 两层等待、预算 5s/2s 拍出来，且失败时看不到 Start 返回了什么。
+	// 现在只等**一个事件**（ready 标记就绪），预算由 testutil 按 t.Deadline 推导。
+	testutil.EventuallyObserving(t, "daemon 写出 ready 标记（pid 文件可判定为就绪）", func() bool {
+		return IsReady(pidPath)
+	}, func() string {
 		select {
-		case <-ready:
-			// OK
-		case <-time.After(2 * time.Second):
-			t.Fatal("Daemon start timeout (2s)")
+		case err := <-startErr:
+			return testutil.FormatObserved("daemon_start_returned", true, "start_err", err)
+		default:
+			return testutil.FormatObserved("daemon_start_returned", false)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Daemon start timeout (5s)")
-	}
+	})
 
 	// Verify daemon is running
 	if !d.Status().Running {
@@ -1003,22 +990,18 @@ func TestDaemonStartupTimeout(t *testing.T) {
 
 	// No daemon started, so IsReady will never return true
 	// Simulate the timeout scenario
-	ready := make(chan struct{}, 1)
-	go func() {
-		for i := 0; i < 5; i++ {
-			if IsReady(pidPath) {
-				ready <- struct{}{}
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-
-	select {
-	case <-ready:
-		t.Error("should not become ready when no daemon is running")
-	case <-time.After(2 * time.Second):
-		// Expected: timeout
+	//
+	// ★ 2026-10-27 ：原实现是「轮询 5 次 IsReady（100ms 一次），再 select 等 2s 证明什么都没发生」。
+	// 那 2.5 秒测的是"这两秒内没有别的东西写这个文件"，与"启动超时"这条语义无关 ——
+	// 机器再慢它也不会红，机器再快它也不证明什么（SLEEP_NEG 型：负向断言靠等时间成立）。
+	//
+	// 真正钉住的不变量是：**没有 daemon 在跑 ⇒ ready 判定必须为 false**。
+	// `IsReady → IsRunning → isProcessAlive(pid)`，pid 文件不存在就是 false，不需要等。
+	if IsReady(pidPath) {
+		t.Fatal("没有 daemon 运行时 IsReady 必须为 false（pid 文件不存在）")
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("未启动任何 daemon，pid 文件不应存在：%v", err)
 	}
 }
 

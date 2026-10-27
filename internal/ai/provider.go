@@ -302,6 +302,18 @@ func (c *SimpleClient) Stream(ctx context.Context, req Request) (<-chan Event, e
 		// 去除末尾 /，与 NewSimpleClient 保持一致
 		snap.baseURL = strings.TrimRight(req.BaseURL, "/")
 	}
+	// req.Model 非空时优先使用（与 req.BaseURL 同构的"请求级覆盖"）。
+	//
+	// ★ 修复前此处只认 snap.model（= client 的全局字段），req.Model 被彻底忽略：
+	// 调用方填了 Model 却毫无作用（goal eval / 压缩模型 / 子 agent 指定模型都中招），
+	// 于是唯一"能让它生效"的办法变成了 AIClient.SetModel —— 一个进程级全局改写。
+	// 多个子 agent 并发时该全局量互相覆盖（A 设 X → B 读到 X 也设 Y → A 恢复旧值
+	// → B 恢复 Y ⇒ 全局永久停在 Y），且模型选择这种**请求级参数**本就不该是全局状态。
+	//
+	// 生效后：Model 走请求，client.model 只作缺省值。空值保持原语义（用全局）。
+	if req.Model != "" {
+		snap.model = req.Model
+	}
 	// B-P4 口径修复：EstimatedInputTokens 必须与 actual 同口径（完整请求输入
 	// system+tools+messages）。B-P2 旧修复只估 messages（首轮≈10 token），
 	// ratio = 6220/10 ≈ 622 命中脏数据上界 → 校准永不生效（实测恒差 585 不收敛）。

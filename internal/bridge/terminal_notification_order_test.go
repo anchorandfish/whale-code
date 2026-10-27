@@ -5,19 +5,18 @@ package bridge
 // 背景（CI 实测暴露，非构造场景）：
 // 新版 token 验签失败时，AuthProvider.runAsyncReconnect 要补发一条
 // NotifyReconnectFailure(false, err)，用来覆盖"重连成功"那条通知，避免 IDE 停在假成功
-// （X3 病灶5 的收尾）。但这两条通知分属两个 goroutine：
-//   - 生产者（本包 ReconnectOnAuthErrorAsync 的 goroutine）发 finishAsyncReconnect(...)
-//   - 消费者（provider.runAsyncReconnect）发 NotifyReconnectFailure(...)
+// （X3 病灶5）。但这两条通知分属两个 goroutine：
+// - 生产者（本包 ReconnectOnAuthErrorAsync 的 goroutine）发 finishAsyncReconnect(...)
+// - 消费者（provider.runAsyncReconnect）发 NotifyReconnectFailure(...)
 // 修复前生产者先 `resultCh <- result`（buffered，不阻塞）再发通知，两者之间没有同步点
 // ⇒ 补发的失败可能先到 ⇒ IDE 以最后一条为准 ⇒ 又显示"重连成功"。
 //
 // 本文件给出两道判据：
-//  1. 结构门（确定性，AST）：任何 `resultCh <-` 交付之前，同一个 block 内必须先有
-//     `finishAsyncReconnect(...)` 调用。这条门不依赖调度，改回旧顺序必红。
-//  2. 行为判据（happens-before）：消费者拿到结果的那一刻，终局通知必须已经记录。
-//     修复后由程序顺序保证（send happens-after 回调），恒绿；修复前则取决于调度，
-//     慢消费者（要验签）往往让生产者先发通知 —— 这正是一条老用例只在 CI 偶发红的原因。
-//     所以判别力由第 1 条承担，第 2 条负责盯住"交付边界"这个不变量本身。
+// 1. 结构门（确定性，AST）：任何 `resultCh <-` 交付之前，同一个 block 内必须先有
+// `finishAsyncReconnect(...)` 调用。这条门不依赖调度，改回旧顺序必红。
+// 2. 行为判据（happens-before）：消费者拿到结果的那一刻，终局通知必须已经记录。
+// 修复后由程序顺序保证（send happens-after 回调），恒绿；修复前是概率红
+// —— 所以它**不能单独**当判别器，判别力由第 1 条承担。
 
 import (
 	"context"
@@ -56,8 +55,8 @@ func w124IsFinishCall(stmt ast.Stmt) bool {
 
 // TestW124_FinishNotificationPrecedesResultSend 结构门：交付结果前必须先发终局通知。
 //
-// 判别性：把 reconnect.go 里三处「通知 / 交付」的顺序改回旧样子，本用例立刻红。
-// 为防止"没扫到东西也算绿"，同时断言命中数 > 0。
+// 判别性：把 reconnect.go 里三处「通知 / 交付」的顺序改回旧样子，本用例立刻红
+// 。为防止"没扫到东西也算绿"，同时断言命中数 > 0。
 func TestW124_FinishNotificationPrecedesResultSend(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "reconnect.go", nil, 0)

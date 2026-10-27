@@ -836,7 +836,7 @@ func (e *Executor) askUserHandler() Handler {
 }
 
 // skillHandler skill 调用处理器
-// 调 ExecuteWithMeta 获取元数据，若 Model 非空调 aiClient.SetModel（执行后 defer 恢复）
+// 调 ExecuteWithMeta 取 Prompt 返回；**不改写**全局 AIClient（模型注入已于 删除）。
 func (e *Executor) skillHandler() Handler {
 	return func(ctx context.Context, raw json.RawMessage) (string, error) {
 		var input SkillInput
@@ -856,13 +856,6 @@ func (e *Executor) skillHandler() Handler {
 			return fmt.Sprintf("skill execute failed: %v", err), nil
 		}
 
-		// Model 注入：若 skill 指定 model，执行期覆盖 aiClient，结束后恢复
-		if result.Model != "" && e.AIClient != nil {
-			origModel := e.AIClient.Model()
-			e.AIClient.SetModel(result.Model)
-			defer e.AIClient.SetModel(origModel)
-		}
-
 		// B2（S19-H-B，2026-09-15 · O-T 轮）：此处原有「把 skill 声明的 allowed-tools 写进
 		// 共享 Pipeline.Policy、defer 恢复」的注入，已删除。理由：
 		// · SetAllowedTools 是「免问表」（permission.go:609 auto-approve），不是能力白名单；
@@ -873,6 +866,16 @@ func (e *Executor) skillHandler() Handler {
 		// 同类先例：agent_task.go:292 已以同一理由移除 SetAllowedTools(intersect(...))。
 		// 守卫：gt_b2_skill_allowed_tools_test.go（结构面判别器 + 范围守卫）。
 		// skill.SkillResult.AllowedTools 字段本身保留（公开结构，tui 在用），本处只停用注入。
+
+		// 此处原有「若 skill 指定 model，则 AIClient.SetModel(result.Model)
+		// + defer 恢复」的注入，已删除。两个理由：
+		// · **它从未生效**：位置在 ExecuteWithMeta **之后**，而两者之间没有任何 AI 调用
+		// ⇒ 改完全局后立刻 return，defer 当场把值改回去，窗口内零请求。
+		// （看起来"接线了"，实际是死代码 —— 比缺失更难发现。）
+		// · 即使位置对，也不该用全局改写：多个 skill / 子 agent 并发会互相污染
+		// （同 agent_task.go 的原因，见）。
+		// skill 的 model 仍经 SkillResult.Model 返回；若将来需要让它影响请求，
+		// 应在**调用 AI 之前**把它作为 ai.Request.Model 传入，而不是改写全局 client。
 		return result.Prompt, nil
 	}
 }

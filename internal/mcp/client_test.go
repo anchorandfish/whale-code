@@ -840,10 +840,10 @@ func TestMCPClientNewClientFailure(t *testing.T) {
 
 // TestClient_Timeout 测试 MCP 调用在 context 超时时返回错误
 //
-// 判据设计：旧版给 1ns 超时、同时让 mock server 正常回包。产品的等待是
-// select 里同时挂「收到回包」与「ctx.Done()」两个分支（transport_stdio.go），
-// **两个分支同时就绪时 Go 随机挑一个** ⇒ 只要回包先落到 channel，这次就返回成功、用例红
-// （CI 上确实这样红过："expected超时返回错误，但得到 nil"）。
+// 判据设计：旧版给 1ns 超时、同时让 mock server 正常回包。产品里的等待是
+// `select { case resp := <-ch: … case <-ctx.Done(): … }`（transport_stdio.go:218），
+// **两个分支同时就绪时 Go 随机挑一个** ⇒ 只要回包先落到 ch，这次就返回成功，
+// 用例红。CI 上确实这样红过（"expected超时返回错误，但得到 nil"）。
 // 现在改为调用 "hang"（mock server 收到请求但**永不回包**），ctx 成为唯一出路 ⇒ 确定性。
 func TestClient_Timeout(t *testing.T) {
 	client, cleanup := startMockServer(t)

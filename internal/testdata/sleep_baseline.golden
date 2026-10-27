@@ -1,0 +1,89 @@
+# 基线：测试里 time.Sleep 的处数（file<TAB>count），由 sleep_gate_test.go 维护。
+#
+# ★ 这个文件只许**变小**。新增一行 = 你在引入一条「等固定秒数」的判据，
+#   请先读 internal/testutil/wait.go 顶部的说明，改用 testutil.Eventually*。
+# 更新方式（必须与代码改动同一个提交，让 diff 里看得见）：
+#   WHALE_UPDATE_SLEEP_BASELINE=1 go test ./internal/ -run TestGate_TimeSleepRatchet
+#
+# 合计：211 处 / 81 个文件
+cache_collapse_e2e_test.go	2
+internal/ai/backpressure_test.go	5
+internal/ai/bug_test.go	1
+internal/ai/caching_integration_bus_test.go	4
+internal/ai/caching_integration_e2e_test.go	2
+internal/ai/recovery_coordinator_test.go	1
+internal/ai/region_test.go	3
+internal/ai/retry_region_test.go	1
+internal/bridge/reconnect_test.go	2
+internal/bridge/scheduler_test.go	13
+internal/bridge/x3_bucket_test.go	1
+internal/bus/bus_test.go	1
+internal/config/bug_test.go	1
+internal/config/memory_select_cache_test.go	1
+internal/config/memory_v2_test.go	2
+internal/config/first_turn_nonblocking_test.go	2
+internal/context/cache_aware_break_test.go	5
+internal/context/session_lifecycle_test.go	8
+internal/daemon/audit_regression_test.go	4
+internal/daemon/daemon_p0_fix_test.go	1
+internal/daemon/worker_stdin_unix_test.go	2
+internal/daemon/x3_bucket_test.go	2
+internal/github/hash_cache_test.go	1
+internal/hook/hook_types_test.go	1
+internal/hook/hot_reload_test.go	7
+internal/keybindings/hot_reload_test.go	11
+internal/log/m22_extension_test.go	1
+internal/lsp/client_context_leak_test.go	4
+internal/lsp/client_test.go	2
+internal/lsp/lsp_317_test.go	1
+internal/lsp/mock_server_test.go	2
+internal/lsp/restart_test.go	1
+internal/mcp/elicitation_sanitize_test.go	1
+internal/mcp/elicitation_test.go	3
+internal/mcp/oauth2_discovery_test.go	1
+internal/mcp/streaming_test.go	3
+internal/mcp/transport_http_test.go	1
+internal/memory/forgetting_test.go	4
+internal/memory/scope_test.go	2
+internal/memory/search_test.go	1
+internal/monitor/monitor_test.go	2
+internal/monitor/semaphore_test.go	5
+internal/monitor/stopall_process_group_test.go	3
+internal/notify/notifier_test.go	1
+internal/orchestrator/contractor_test.go	1
+internal/orchestrator/degrade_test.go	1
+internal/orchestrator/early_terminator_test.go	3
+internal/orchestrator/evolution_loop_test.go	6
+internal/orchestrator/orchestrate_command_test.go	1
+internal/orchestrator/parallel_scheduler_test.go	2
+internal/platform/process_alive_unix_test.go	1
+internal/sandbox/sandbox_guard_attack_linux_test.go	4
+internal/sandbox/sandbox_guard_attack_windows_test.go	3
+internal/session/l1_flock_migration_test.go	2
+internal/session/multi_instance_probe_test.go	4
+internal/session/process_liveness_unix_test.go	1
+internal/session/store_test.go	3
+internal/signal/shutdown_test.go	3
+internal/tools/agent_test.go	1
+internal/tools/bug_test.go	1
+internal/tools/executor_test.go	1
+internal/tools/file_cache_disk_test.go	6
+internal/tools/loop_noop_write_test.go	1
+internal/tools/loop_test.go	4
+internal/tools/mcp_audit_fix_test.go	1
+internal/tools/monitor_test.go	2
+internal/tools/pipeline_timeout_test.go	1
+internal/tools/output_limits_test.go	1
+internal/tools/scheduler_test.go	8
+internal/tools/task_sandbox_test.go	1
+internal/tools/tools_extension_test.go	3
+internal/tools/readback_tools_test.go	3
+internal/tools/fork_ctx_anchor_test.go	1
+internal/tools/web_test.go	1
+internal/tui/ask_cache_test.go	2
+internal/tui/composer_input_guard_test.go	2
+internal/tui/daemon_test.go	1
+internal/tui/monitor_output_ownership_test.go	1
+internal/tui/mcp_discovery_log_test.go	1
+internal/tui/streaming_behavior_test.go	1
+internal/typeahead/fileindex_test.go	10

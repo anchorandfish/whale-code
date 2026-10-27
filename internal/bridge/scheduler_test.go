@@ -236,16 +236,24 @@ func TestRefreshScheduler_ScheduleFromExpiresIn(t *testing.T) {
 
 	s := newTestScheduler(refreshFn)
 
-	// 安排在 20ms 后刷新
-	s.ScheduleFromExpiresIn(20)
-
-	// 10ms 后不应刷新
+	// 第一段：「没到点不会提前刷」。
+	// ★ 不要用「排 20ms + 睡 10ms 再断言还没刷」：测试配置的 RefreshBufferMs 是 5ms，
+	// 20ms TTL 的实际延迟只有 15ms ⇒ 这个断言只剩 5ms 余量。机器一忙，连
+	// time.Sleep(10ms) 自己都会 overshoot 过 15ms，用例于是假红
+	// （实测 2026-10-27：6 个包并发编译时 30 次里 3 次报 "refresh happened too early"）。
+	// 改成给一个 60s 的 TTL：余量从 5ms 变成约 60s，"提前刷新"才真的是提前。
+	s.ScheduleFromExpiresIn(60_000)
+	if !s.GetState().IsScheduled {
+		t.Fatal("ScheduleFromExpiresIn 之后应当处于已排定状态")
+	}
 	time.Sleep(10 * time.Millisecond)
 	if refreshed.Load() {
-		t.Error("refresh happened too early")
+		t.Error("refresh happened too early (TTL=60s)")
 	}
 
-	// 再等一段（轮询到 2s 上界）应该刷新了
+	// 第二段：「到点会刷」。20ms TTL ⇒ 缓冲 5ms ⇒ 约 15ms 后触发。
+	// 这里只等**事件发生**（waitUntil 自带 2s 上界），不再断言"某个时刻之前它没发生"。
+	s.ScheduleFromExpiresIn(20)
 	if !waitUntil(2*time.Second, refreshed.Load) {
 		t.Error("expected refresh to have occurred")
 	}

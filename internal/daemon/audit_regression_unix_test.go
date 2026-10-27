@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/anchorandfish/whale-code/internal/testutil"
 )
 
 func shortSocketDir(t *testing.T) string {
@@ -65,22 +68,43 @@ func TestUDSStopClosesActiveConnection(t *testing.T) {
 	}
 	defer conn.Close()
 
-	deadline := time.Now().Add(time.Second)
-	for {
+	connCount := func() int {
 		server.mu.Lock()
-		accepted := len(server.conns) == 1
-		server.mu.Unlock()
-		if accepted || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+		defer server.mu.Unlock()
+		return len(server.conns)
 	}
+	// ★ 前提必须**被断言**，不能"等不到就算了"。
+	// 原实现是 `if accepted || time.Now().After(deadline) { break }` —— 上限到了直接往下走，
+	// 于是连接根本没被登记时，后面的 Stop 测的是"空集合上的 Stop 很快" ⇒ 假绿。
+	testutil.EventuallyObserving(t, "UDS server 已 accept 并登记该连接", func() bool {
+		return connCount() == 1
+	}, func() string {
+		return testutil.FormatObserved("registered_conns", connCount())
+	})
+
 	started := time.Now()
 	if err := server.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("Stop waited for read timeout instead of closing the active connection: %v", elapsed)
+	elapsed := time.Since(started)
+
+	// ★ 判据是"Stop 没有等在读超时上"，所以上界只能是**读超时本身**
+	// （`UDSReadTimeout` = 10s）。原来写 `elapsed > time.Second` 是拿"预期延迟"当阈值：
+	// 机器一忙就可能 >1s，红的却是正常行为。
+	if elapsed > UDSReadTimeout/2 {
+		t.Fatalf("Stop 疑似等到了读超时才对端关闭（耗时 %v，读超时 %v）", elapsed, UDSReadTimeout)
+	}
+
+	// 机制面（比耗时更硬）：Stop 之后这条活跃连接必须**已经被服务端关掉**。
+	// 只断言"快"不排除"很快返回但连接还开着"；读回 EOF/连接重置才是真关。
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, readErr := conn.Read(make([]byte, 1)); readErr == nil {
+		t.Fatal("Stop 之后活跃连接仍可读：服务端没有主动关闭它")
+	} else {
+		var nerr net.Error
+		if errors.As(readErr, &nerr) && nerr.Timeout() {
+			t.Fatal("Stop 之后连接仍未关闭（一直等到读截止才返回 timeout）")
+		}
 	}
 }
 
@@ -147,20 +171,42 @@ func TestCancelRunningTaskKillsIgnoringProcessGroup(t *testing.T) {
 	d := &Daemon{queue: queue, pool: pool, events: NewEventBus()}
 	task := queue.AddWithNotify("ignored", dir, TaskDream, PriorityNormal)
 
-	waitForAuditCondition(t, 3*time.Second, func() bool {
+	// ★ 2026-10-27 ：这里原来是 `waitForAuditCondition(t, 3*time.Second, ...)`。
+	// 3s 是**拍出来的延迟阈值**，不是语义：实测（5 个包并发编译做负载）
+	// 父进程写 PID 文件耗时从空闲 0.38s 波动到 **1.45–3.96s**，10 次里 4 次越过 3s
+	// ⇒ 这条判据变成抛硬币（空闲 30/30 绿、带负载约 20% 红），CI 只能靠「失败包重试一次」兜着。
+	// 现在：等事件（cond），预算交给 testutil 的**挂死兜底**（由 t.Deadline 推导）。
+	testutil.EventuallyObserving(t, "任务进入 running 且父/子进程都已写出 PID 文件", func() bool {
 		current := queue.Get(task.ID)
 		return current != nil && current.Status == TaskRunning &&
 			auditPIDReady(parentPIDPath) && auditPIDReady(childPIDPath)
-	}, "task and child process did not start")
+	}, func() string {
+		status := "<任务已不在队列>"
+		if current := queue.Get(task.ID); current != nil {
+			status = string(current.Status)
+		}
+		return testutil.FormatObserved(
+			"status", status,
+			"parent_pid_file", auditPIDReady(parentPIDPath),
+			"child_pid_file", auditPIDReady(childPIDPath),
+			"pool_running", pool.RunningCount(),
+		)
+	})
 	parentPID := readAuditPID(t, parentPIDPath)
 	childPID := readAuditPID(t, childPIDPath)
 
 	if err := d.CancelTask(task.ID); err != nil {
 		t.Fatalf("CancelTask: %v", err)
 	}
-	waitForAuditCondition(t, 3*time.Second, func() bool {
+	testutil.EventuallyObserving(t, "取消后 worker 与整个进程组都已退出", func() bool {
 		return pool.RunningCount() == 0 && !isProcessAlive(parentPID) && !isProcessAlive(childPID)
-	}, "cancelled process group remained alive")
+	}, func() string {
+		return testutil.FormatObserved(
+			"pool_running", pool.RunningCount(),
+			"parent_alive", isProcessAlive(parentPID),
+			"child_alive", isProcessAlive(childPID),
+		)
+	})
 	current := queue.Get(task.ID)
 	if current == nil || current.Status != TaskCancelled {
 		t.Fatalf("worker completion overwrote cancellation: %#v", current)
@@ -189,14 +235,7 @@ func auditPIDReady(path string) bool {
 	return err == nil && pid > 0
 }
 
-func waitForAuditCondition(t *testing.T, timeout time.Duration, condition func() bool, message string) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal(message)
-}
+// ★ 2026-10-27 ：本文件原先自带一份 `waitForAuditCondition(t, timeout, cond, msg)`
+// —— 「等待实现」的第 N 份拷贝。拷贝的害处不是重复几行，而是**预算口径可以各自漂移**
+// （这里写 3s、别处写 100ms），于是同一个不变量在不同文件里判据强弱不同。
+// 等待统一收口到 `internal/testutil.Eventually*`：一处实现、一套预算口径（挂死兜底）。

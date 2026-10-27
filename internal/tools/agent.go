@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -412,6 +411,15 @@ type AgentContext struct {
 	toolResults      map[string]string
 	CacheStats       CacheStats
 
+	// ModelOverride 是本上下文使用的模型（请求级，非空即覆盖全局 client model）。
+	//
+	// ★ ：这里**故意不用** AIClient.SetModel 实现。SetModel 是进程级全局改写，
+	// 多个子 agent 并发时会互相污染（A 设 X → B 读到 X 也设 Y → A 恢复旧值
+	// → B 恢复 Y ⇒ 全局永久停在 Y，之后所有请求都用 Y）。
+	// 模型是"这一次请求要哪个模型"的参数，归属请求，不归属进程。
+	// 空值 = 用 client 当前模型（保持既有语义）。
+	ModelOverride string
+
 	ParentMessages  []ai.MessageEntry
 	ParentSysPrompt string
 	IsForkChild     bool
@@ -460,6 +468,21 @@ func (a *AgentContext) TerminalFailure() *ToolExecError {
 		return nil
 	}
 	return a.terminalFailure
+}
+
+// modelForRequest 返回本上下文每次请求应使用的模型。
+//
+// 非空的 ModelOverride 优先；否则回退到 client 当前模型（既有语义）。
+// 返回的字符串直接填进 ai.Request.Model —— 由 ai.SimpleClient.Stream 在做快照时
+// 覆盖 snap.model，因此**不需要**改写全局 client 状态。
+func (a *AgentContext) modelForRequest() string {
+	if a != nil && a.ModelOverride != "" {
+		return a.ModelOverride
+	}
+	if a == nil || a.Executor == nil || a.Executor.AIClient == nil {
+		return ""
+	}
+	return a.Executor.AIClient.Model()
 }
 
 // noteTerminalFailure 记录终局拒绝（幂等，只记首个），返回本次 err 是否为终局拒绝。
@@ -561,12 +584,23 @@ func (a *AgentContext) Run(parentCtx context.Context) (string, error) {
 	systemPrompt := a.buildSystemPrompt()
 
 	// cached rendered system prompt for nested Fork sub-agent inheritance
-	if a.Executor != nil {
-		a.Executor.RenderedSystemPrompt = &ai.RenderedPrompt{
-			Content:     systemPrompt,
-			Fingerprint: fmt.Sprintf("%x", sha256.Sum256([]byte(systemPrompt))),
-		}
-	}
+	//
+	// ★★ ：这里**曾经**把 systemPrompt 写回
+	// `a.Executor.RenderedSystemPrompt`。已删除，理由是它既无用又有害：
+	//
+	//	有害：`Executor` 是**进程级**共享对象，而 `Run()` 是每个子 agent 各跑一份
+	// ⇒ 两个并发子 agent 同时写同一地址。`-race` 实测命中：
+	// `TestDEC047_ConcurrentSubAgents_ModelsDoNotInterfere`（agent.go:589）。
+	//	无用：注释说的"给嵌套 Fork 继承"两条都不成立 ——
+	// ① Fork 继承走的是 `AgentContext.ParentSysPrompt`（`handleForkAgent` 填、
+	// `buildForkSystemPrompt` 读），不是这条路；
+	// ② 嵌套 Fork 被 `handleForkAgent` 的 `IsForkChild` 守卫明确禁止。
+	//
+	// 正确归属（第一性原理：可变状态的生命周期应与其归属一致）：
+	// `Executor.RenderedSystemPrompt` 只由**主循环**写（`internal/tui/stream.go`
+	// `buildRequest`，单线程），Fork 读的正是它；子 agent 不参与。
+	//
+	// 判别器：`-race` 下并发两个子 agent，恢复本段写入即报 DATA RACE。
 
 	messages := a.buildInitialMessages()
 
@@ -581,7 +615,8 @@ func (a *AgentContext) Run(parentCtx context.Context) (string, error) {
 			Messages:     messages,
 			MaxTokens:    8192,
 			Tools:        agentTools,
-			Model:        a.Executor.AIClient.Model(),
+			// 走请求级 model（ModelOverride 优先），不再依赖"先改全局再读全局"。
+			Model: a.modelForRequest(),
 		}
 
 		// Always use StreamWithRetry for consistent retry/degrade/compress behavior.

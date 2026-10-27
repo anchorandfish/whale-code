@@ -286,7 +286,8 @@ func (t *AgentTask) getStatus() TaskStatus {
 // 调用其 Run 方法完成多轮对话。AgentContext.Run 内部已使用 ai.StreamWithRetry。
 // streamCtx 携带 agentIDKey，AgentContext.Run → StreamWithRetry 自然透传 AgentID。
 //
-// 若 input.Model 非空，通过 AIAdapter.SetModel 临时注入（参考 B4-3B 改进2，defer 恢复）。
+// 若 input.Model 非空，写入 AgentContext.ModelOverride（请求级，），
+// 由 ai.Request.Model 直达 provider —— **不修改**全局 AIClient 状态。
 //
 // ⚠️ L2移除了一处**共享状态就地改写**：此前这里会
 // `Pipeline.Policy().SetAllowedTools(intersect(input.Tools, allowedTools))`，
@@ -302,20 +303,22 @@ func (t *AgentTask) runMultiRound(streamCtx context.Context, input AgentInput, a
 		return "", fmt.Errorf("executor or AIClient not configured for agent task %s", t.id)
 	}
 
-	// 临时注入 Model（B4-3B 改进2：defer 恢复）
-	if input.Model != "" {
-		originalModel := t.executor.AIClient.Model()
-		t.executor.AIClient.SetModel(input.Model)
-		defer func() {
-			t.executor.AIClient.SetModel(originalModel)
-		}()
-	}
-
 	// 构造 AgentContext（复用旧实现，关卡 7）
 	agentCtx := NewAgentContext(t.executor, input.Prompt, "", t.executor.WorkDir(), t.depth)
 	agentCtx.AgentType = t.agentType
 	agentCtx.MaxDepth = maxAgentDepth
 	agentCtx.Timeout = defaultAgentTimeout
+
+	// 模型覆盖走**请求级**字段，不再改写全局 client。
+	//
+	// ★ 修复前这里是 `AIClient.SetModel(input.Model)` + `defer SetModel(originalModel)`：
+	// 一个进程级全局量，被当成"本次子任务的参数"用。两个子 agent 并发时必然互相污染：
+	// A 读 model0 → A 设 X → B 读 X（错，它以为是全局默认）→ B 设 Y
+	// → A 恢复 model0 → B 恢复 Y ⇒ 全局永久停在 Y，之后**所有**请求都用 Y。
+	// 模型是"这次请求用哪个模型"，归属请求；全局状态只该保存缺省值。
+	if input.Model != "" {
+		agentCtx.ModelOverride = input.Model
+	}
 
 	// 工具面收窄（L2）：只由 AgentType（角色工具面）∩ parentToolSet（委派不扩权）决定。
 	// AgentInput.Tools 已不参与能力判定（见其字段说明），故此处不再读取。

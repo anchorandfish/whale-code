@@ -85,7 +85,7 @@ func appendBiBoxLine(lines []string, en, zh string) []string {
 
 // sandboxClaimsFor 返回指定平台对应的沙箱卖点文案（英文主行、中文辅行）。
 //
-// 为什么按平台分支（W-121）：沙箱实现是平台相关的（macOS Seatbelt、Linux
+// 为什么按平台分支：沙箱实现是平台相关的（macOS Seatbelt、Linux
 // Landlock + seccomp-BPF、Windows Job Object）。写死其中一个平台，等于对
 // 另外两个平台的用户陈述了错误事实 —— Linux 用户开机第一眼看到
 // "Windows-native"，与 README 的平台表直接矛盾。
@@ -170,7 +170,7 @@ func (o *Onboarding) renderDifferentiatedWelcome() (out string) {
 		"     · 用得越久，whale 越懂你的项目")
 	lines = append(lines, buildWelcomeLine(""))
 	// 卖点 3：OS 级沙箱（文案按平台分支，见 sandboxClaimsFor）
-	// W-121：原实现把 Windows 的 Job Object 写死，Linux/macOS 用户首屏被误导。
+	// 原实现把 Windows 的 Job Object 写死，Linux/macOS 用户首屏被误导。
 	sandboxEN, sandboxZH := sandboxClaims()
 	lines = appendBiBoxLine(lines, sandboxEN, sandboxZH)
 	lines = appendBiBoxLine(lines,

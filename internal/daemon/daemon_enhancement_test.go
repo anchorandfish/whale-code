@@ -78,14 +78,31 @@ func TestWorkerRegistry_ListByType(t *testing.T) {
 func TestWorkerRegistry_Heartbeat(t *testing.T) {
 	reg := NewWorkerRegistry()
 	reg.Register("w1", WorkerTypeCode, WorkerCapabilities{})
-	time.Sleep(10 * time.Millisecond)
-	err := reg.Heartbeat("w1")
-	if err != nil {
+
+	// ★ 2026-10-27 ：原来是 `time.Sleep(10ms)` 后调 Heartbeat，再断言
+	// `time.Since(LastHeartbeat) < 100ms` —— 这条断言**不具判别力**：
+	// 即使 Heartbeat 一行都没执行，Register 刚写的时间戳也只差 10ms，照样绿。
+	// 改法：把时间戳**置成一个很久以前的值**，再 Heartbeat；只有真更新过才会前进。
+	// 全程零睡眠，判定只依赖"值变没变"。
+	stale := time.Now().Add(-time.Hour)
+	reg.mu.Lock()
+	if worker, ok := reg.workers["w1"]; ok {
+		worker.LastHeartbeat = stale
+	}
+	reg.mu.Unlock()
+
+	if err := reg.Heartbeat("w1"); err != nil {
 		t.Fatalf("Heartbeat failed: %v", err)
 	}
 	w, _ := reg.Get("w1")
-	if time.Since(w.LastHeartbeat) > 100*time.Millisecond {
-		t.Error("Heartbeat should be recent")
+	if w == nil {
+		t.Fatal("worker w1 应在注册表里")
+	}
+	if !w.LastHeartbeat.After(stale) {
+		t.Fatalf("Heartbeat 没有更新 LastHeartbeat（仍是 %v）", w.LastHeartbeat)
+	}
+	if time.Since(w.LastHeartbeat) > time.Minute {
+		t.Fatalf("Heartbeat 写入的时间戳不合理地旧：%v", w.LastHeartbeat)
 	}
 }
 

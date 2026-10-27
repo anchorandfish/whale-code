@@ -161,9 +161,8 @@ func (rm *ReconnectManager) Stop() {
 // - 失败时 attempt++，超 MaxAttempts 则返回 ReconnectResult{Err: ErrBridgeReconnect}
 // - ctx 取消时立即返回 ReconnectResult{Err: ctx.Err()}
 // - goroutine 退出时：inflight=false + 调 onComplete（不传 token，优化 4）
-//
-// 顺序不变量：终局通知先发、结果后交付 —— 否则消费者补发的"验签失败"通知可能先到，
-// IDE 以最后一条为准 ⇒ 停在假成功。
+// ★ 顺序不变量：终局通知先发，结果后交付 —— 否则消费者补发的
+// "验签失败"通知可能先到，IDE 以最后一条为准 ⇒ 停在假成功。
 //
 // 防御性（吸纳审查优化 4/5）：
 // - defer recover() 防回调 panic 影响 goroutine
@@ -181,7 +180,7 @@ func (rm *ReconnectManager) ReconnectOnAuthErrorAsync(ctx context.Context) <-cha
 	rm.mu.Unlock()
 	if refreshFn == nil {
 		err := ai.WithID(fmt.Errorf("reconnect failed: refreshToken callback not configured"), ai.ErrBridgeReconnect)
-		// 终局通知先于交付（不变量见下方注释）
+		// 终局通知先于交付（不变量见下方 注释）
 		rm.finishAsyncReconnect(false, err)
 		resultCh <- ReconnectResult{
 			Err:     err,
@@ -199,7 +198,7 @@ func (rm *ReconnectManager) ReconnectOnAuthErrorAsync(ctx context.Context) <-cha
 		defer func() {
 			if r := recover(); r != nil {
 				err := ai.WithID(fmt.Errorf("reconnect goroutine panic: %v", r), ai.ErrBridgeReconnect)
-				// 终局通知先于交付（不变量见下方注释）
+				// 终局通知先于交付（不变量见下方 注释）
 				rm.finishAsyncReconnect(false, err)
 				resultCh <- ReconnectResult{
 					Err:     err,

@@ -57,14 +57,13 @@ jobs:
           #   测试一失败就会**在赋值之前**整步退出（第一次接注解时就是这么哑的：
           #   注解一条没出来，只剩 Actions 自己的 "exit code 1"）。
           rc=0
-          # `-p 2`：包级并发上限。race 下每个包本身就很吃 CPU，默认按核数铺开时
-          # 一批"等 N 秒"的用例会互相把对方挤过时限（同一份代码每次红的用例都不一样，
-          # 曾出现 bridge / mcp / tools 轮流出红）。限并发只是让计时类判据不被自己人
-          # 干扰；真正的竞态仍按用例逐个修（例如 WS 通知早于 handler、进程退出早于输出收齐）。
+          # `-p 2` = 包级并发上限。race 下每个包本身就很吃 CPU，默认按核数铺开时
+          # 一批"等 N 秒"的用例会互相把对方挤过时限（同一份代码每次红的用例都不一样）。
+          # 限并发只让计时类判据不被自己人干扰；真正的竞态仍按用例逐个修（见 两条）。
           go test -count=1 -race -p 2 ./... 2>&1 | tee /tmp/go-test.log || rc=$?
           if [ "$rc" -ne 0 ]; then
             # 一次重试，只为把「时序抖动」和「真回归」分开：重试仍红才判红。
-            # ★ 不静默：重试通过也会打 ::warning:: 并点名失败的包 —— 绿是绿了，
+            # ★ 不静默：重试通过也打 ::warning:: 并点名失败的包 —— 绿是绿了，
             #   但那几条判据还欠修（本仓历史：每轮红点都会换个用例出现）。
             # awk 而不是 sed：`\+` 在 BSD sed 的 BRE 里不生效，awk 的 ERE 三平台一致。
             pkgs="$(awk '/^FAIL[[:space:]]+github[.]com/ {print $2}' /tmp/go-test.log | sort -u | tr '\n' ' ')"
@@ -99,15 +98,15 @@ jobs:
 
       # -trimpath 是 go build 的编译期开关，不是链接器开关；写进 -ldflags 会让
       # 链接器报 `flag provided but not defined: -trimpath`。
-      # 版本号只从 internal/version.Version 注入（单一真源，见 ）。
+      # 版本号只从 internal/version.Version 注入（单一真源，见）。
       # 产物落 dist/（工作区内）—— upload-artifact@v4 只可靠地收工作区内的文件。
       - name: Build all release binaries
         run: |
           set -euo pipefail
           mkdir -p dist
           RAW_VERSION="$(git describe --tags --always --dirty)"
-          # internal/version.Version 的契约是**不带 v**（展示层统一加 `Whale Code v` 前缀）。
-          # 直接注入 tag 原文会让二进制自称 `vv0.1.1` —— 发版时踩过一次，这里先剥前缀。
+          #  残留清理：internal/version.Version 的契约是**不带 v**（展示层统一加
+          # `Whale Code v` 前缀）。注入 tag 原文会让 artifact 自称 `vv0.1.1-…`，这里先剥前缀。
           VERSION="${RAW_VERSION#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           # `git describe --always` 在没有 tag 时会退化成短提交号 —— 二进制会自称 "f822bde"。

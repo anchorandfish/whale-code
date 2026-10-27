@@ -7,7 +7,7 @@ import (
 )
 
 // TestRenderDifferentiatedWelcome_ContainsThreeSellingPoints 验证首屏文案含三大卖点关键词。
-// 关键词：本地优先 / H12 自我进化 / 当前平台对应的沙箱实现（W-121 起按平台分支）。
+// 关键词：本地优先 / H12 自我进化 / 当前平台对应的沙箱实现（起按平台分支）。
 // 对标 D1-1 改动 1 验收要求。
 func TestRenderDifferentiatedWelcome_ContainsThreeSellingPoints(t *testing.T) {
 	ob := &Onboarding{}
@@ -27,11 +27,12 @@ func TestRenderDifferentiatedWelcome_ContainsThreeSellingPoints(t *testing.T) {
 	}
 }
 
-// TestSandboxClaims_PerPlatform 钉住 W-121：每个平台只说自己的沙箱实现，不得越界。
+// TestSandboxClaims_PerPlatform 钉住 ：每个平台只说自己的沙箱实现，不得越界。
 //
-// 判别力：改造前（文案写死 Windows Job Object）本测试会命中 "Job Object" 而变红
-// ⇒ 这是一道真门，不是事后追认。
+// 判别力：改造前（文案写死 Windows Job Object）在 Linux 上渲染，
+// 本测试会命中 "Job Object" 而变红 ⇒ 这是一道真门，不是事后追认。
 func TestSandboxClaims_PerPlatform(t *testing.T) {
+	// 各平台的独占标记：出现即代表"在陈述这个平台的实现"。
 	markers := map[string]string{
 		"darwin":  "Seatbelt",
 		"linux":   "Landlock",
@@ -42,6 +43,7 @@ func TestSandboxClaims_PerPlatform(t *testing.T) {
 		if !strings.Contains(en, marker) || !strings.Contains(zh, marker) {
 			t.Errorf("%s 的沙箱文案应含 %q（en=%q zh=%q）", goos, marker, en, zh)
 		}
+		// 反向：不得出现其他平台的独占标记。
 		for otherGOOS, otherMarker := range markers {
 			if otherGOOS == goos {
 				continue

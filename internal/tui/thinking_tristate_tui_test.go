@@ -86,10 +86,21 @@ func captureThinkingWire(t *testing.T, cfg *config.Config) map[string]interface{
 	// 逃生口①（声明优先于端点门），顺带在本判据里把它验一遍。
 	// 本判据的**被测对象仍是"settings 配置是否真的走到线上"**，端点维度另有
 	// `internal/ai` 的 TestA2_* 专测。
-	ai.RegisterThinkingDeclaration("qwen3.7-flash", ai.ThinkingCapSupported)
+	// ★ ：声明的模型名必须与**请求实际携带的模型名**一致。
+	//
+	// 之后 `ai.Request.Model` 会覆盖 client 的 model
+	// （`provider.go`：`if req.Model != "" { snap.model = req.Model }`），
+	// 而 thinking 能力判定用的正是覆盖后的 `snap.model`
+	// （`provider.go`：`ThinkingSupportFor(snap.model, snap.baseURL)`）。
+	//
+	// 本用例的 `req.Model` 来自 TUI 的 `sessionService.ModelName()` = `test-model`
+	// （见上面 `NewModel(cfg, newTestClient("test-model"), …)`）。若仍声明
+	// `qwen3.7-flash`，覆盖后永远查不到声明 ⇒ `enable_thinking` 不下发（假失败）。
+	// 真实生产里"TUI 配置的模型"与"发请求的模型"本就是同一个名字，此处对齐它。
+	ai.RegisterThinkingDeclaration("test-model", ai.ThinkingCapSupported)
 	t.Cleanup(ai.ClearThinkingDeclarations)
 
-	client := ai.NewSimpleClient("qwen3.7-flash", "test-key", srv.URL, ai.ProviderOpenAI)
+	client := ai.NewSimpleClient("test-model", "test-key", srv.URL, ai.ProviderOpenAI)
 	defer client.Close()
 
 	events, err := client.Stream(context.Background(), req)

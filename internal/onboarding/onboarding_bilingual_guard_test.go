@@ -53,7 +53,7 @@ func TestW083B5_WelcomeBox_BilingualForm(t *testing.T) {
 	}
 
 	// ④ 关键内容仍在（原 render_test 的 Contains 断言依赖中文辅行保留）。
-	// W-121：沙箱卖点按平台分支，期望值取自同一 SSOT，不写死某一平台
+	// 沙箱卖点按平台分支，期望值取自同一 SSOT，不写死某一平台
 	// （否则门会把"Linux 上说 Windows-native"这个错误主张钉成合规）。
 	_, sandboxZH := sandboxClaims()
 	for _, want := range []string{"本地优先", "H12 自我进化", sandboxZH} {
