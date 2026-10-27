@@ -5,7 +5,7 @@
 [English](README.md) | **简体中文**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.25.12-00ADD8?logo=go&logoColor=white)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#安全)
 
 Whale Code 是面向个人开发者的编码智能体：你用自然语言描述任务，它读你的代码、改文件、执行命令 —— 全程在你设定的权限规则之内。
@@ -15,29 +15,56 @@ Whale Code 是面向个人开发者的编码智能体：你用自然语言描述
 
 ## 安装
 
-三选一：
+**1. 预编译二进制** —— macOS / Linux，一行装好：
 
 ```bash
-# 1. 从 Releases 页面下载预编译二进制（macOS / Linux / Windows）
+# macOS（Apple Silicon 芯片）
+curl -fL -o whale https://github.com/anchorandfish/whale-code/releases/latest/download/whale-darwin-arm64
 
-# 2. 用 Go 安装（1.25+）
+# 其他平台：同一个地址，换文件名
+#   macOS Intel      whale-darwin-amd64
+#   Linux x86_64     whale-linux-amd64
+#   Linux arm64      whale-linux-arm64
+#   Windows x86_64   whale-windows-amd64.exe   （存成 whale.exe）
+
+chmod +x whale && ./whale --version
+```
+
+也可以到 [最新发布](https://github.com/anchorandfish/whale-code/releases/latest) 页面手动挑文件。
+
+> **macOS —— 仅当你用浏览器下载时**：二进制目前没有代码签名，Gatekeeper 会拦下并提示
+> *"无法打开，因为无法验证开发者"*。执行一次 `xattr -d com.apple.quarantine ./whale` 即可放行，
+> 或者在「系统设置 → 隐私与安全性」里点「仍要打开」。上面那条 `curl` 命令根本不会带上这个标记。
+
+**2. 用 Go 安装**（1.26+）：
+
+```bash
 go install github.com/anchorandfish/whale-code@latest
+# Go 按导入路径末段命名，所以装出来叫 `whale-code`：
+mv "$(go env GOPATH)/bin/whale-code" "$(go env GOPATH)/bin/whale"   # 可选
+```
 
-# 3. 从源码构建
+**3. 从源码构建**：
+
+```bash
 git clone https://github.com/anchorandfish/whale-code.git
 cd whale-code
 CGO_ENABLED=0 go build -o whale .
 ```
 
-产物是单个静态二进制 `whale`，无运行期依赖。
+三种方式得到的都是单个静态二进制，无运行期依赖 —— 名字是 `whale`；如果你走 `go install`
+且没改上面那条 `mv`，则叫 `whale-code`。
 
 ## 配置
 
-1. 设置服务商的 API key（放环境变量，不写入任何文件）：
+1. 给它一个服务商的 API key：
 
    ```bash
    export ANTHROPIC_API_KEY=sk-ant-...   # 或 OPENAI_API_KEY=sk-...
    ```
+
+   这样导出后 key 不落盘，每次启动读取。如果选择在 onboarding 里粘贴，它会被明文存进
+   `~/.whale/settings.json`（权限 `0600`，仅你自己可读）。
 
 2. 启动 `./whale` —— 首次运行会引导你选择服务商和模型，并写入 `~/.whale/settings.json`。
 

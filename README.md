@@ -5,7 +5,7 @@
 > 🐋 A local AI coding assistant for personal use. Lives in your terminal, runs on your machine.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.25.12-00ADD8?logo=go&logoColor=white)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#safety)
 
 Whale Code is a coding agent for individual developers: you describe a task in natural language, and it reads your code, edits files, and runs commands — under permission rules that you control.
@@ -15,29 +15,57 @@ Whale Code is a coding agent for individual developers: you describe a task in n
 
 ## Install
 
-Pick one:
+**1. Prebuilt binary** — macOS / Linux, one line each:
 
 ```bash
-# 1. Download a prebuilt binary (macOS / Linux / Windows) from the Releases page
+# macOS, Apple Silicon
+curl -fL -o whale https://github.com/anchorandfish/whale-code/releases/latest/download/whale-darwin-arm64
 
-# 2. Install with Go (1.25+)
+# other platforms: same URL, different file name
+#   macOS Intel      whale-darwin-amd64
+#   Linux x86_64     whale-linux-amd64
+#   Linux arm64      whale-linux-arm64
+#   Windows x86_64   whale-windows-amd64.exe   (save as whale.exe)
+
+chmod +x whale && ./whale --version
+```
+
+Or pick the file by hand from the [latest release](https://github.com/anchorandfish/whale-code/releases/latest).
+
+> **macOS — only if you download it through a browser:** the binaries are not code-signed yet, so
+> Gatekeeper refuses them with *"cannot be opened because the developer cannot be verified"*.
+> Clear the flag once with `xattr -d com.apple.quarantine ./whale`, or allow it under
+> System Settings → Privacy & Security. The `curl` line above never sets that flag.
+
+**2. Go** (1.26+):
+
+```bash
 go install github.com/anchorandfish/whale-code@latest
+# Go names the binary after the import path, so this lands as `whale-code`:
+mv "$(go env GOPATH)/bin/whale-code" "$(go env GOPATH)/bin/whale"   # optional
+```
 
-# 3. Build from source
+**3. From source**:
+
+```bash
 git clone https://github.com/anchorandfish/whale-code.git
 cd whale-code
 CGO_ENABLED=0 go build -o whale .
 ```
 
-The result is a single static binary `whale` with no runtime dependencies.
+Either way you end up with one static binary and no runtime dependencies — `whale`, or `whale-code`
+if you took the `go install` route and skipped the rename.
 
 ## Configure
 
-1. Set an API key for your provider (kept in an env var, never written to a file):
+1. Give it an API key for your provider:
 
    ```bash
    export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY=sk-...
    ```
+
+   Exported this way the key stays out of files, and it is read on every start. If you paste it into
+   onboarding instead, it is saved as plain text in `~/.whale/settings.json` (mode `0600`, your user only).
 
 2. Start `./whale` — onboarding walks you through provider and model, and writes them into `~/.whale/settings.json`.
 
