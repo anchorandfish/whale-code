@@ -39,9 +39,14 @@ func (o *Onboarding) RunStepEnvironment(state *OnboardingState) error {
 	}
 	state.FatalErrors = fatals
 
+	// 无论是否阻塞都渲染结果：
+	//   - fatal 时，用户需要看到"哪里坏了"才知道怎么修；
+	//   - 非 fatal 时，用户需要看到 [SKIP] 项 —— 那正是第 2/3 步马上就要填的
+	//     东西（key / model）。只打印一句 "passed" 等于把最有用的信息藏起来。
+	fmt.Print(o.doctor.Render(results))
+
 	// 复用 doctor.HasFatal() 判断是否阻塞（审查 v4 修订项 2：避免手动迭代判断）
 	if o.doctor.HasFatal(results) {
-		fmt.Print(o.doctor.Render(results))
 		return fmt.Errorf("environment check found fatal errors — fix them and re-run /onboarding")
 	}
 

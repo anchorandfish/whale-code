@@ -90,7 +90,7 @@ func (d *Doctor) checkAPIKey() CheckResult {
 		return CheckResult{
 			Category:   "Config",
 			Name:       "API Key",
-			Severity:   SeverityFatal,
+			Severity:   d.unconfiguredSeverity(),
 			Message:    "NOT SET",
 			FixSuggest: "set ANTHROPIC_API_KEY or OPENAI_API_KEY env var, or api_key in settings.json",
 		}
@@ -124,7 +124,7 @@ func (d *Doctor) checkModel() CheckResult {
 		return CheckResult{
 			Category:   "Config",
 			Name:       "Model",
-			Severity:   SeverityFatal,
+			Severity:   d.unconfiguredSeverity(),
 			Message:    "empty",
 			FixSuggest: "set model in settings.json or WHALE_MODEL environment variable",
 		}

@@ -17,11 +17,13 @@ func (d *Doctor) checkAPI(ctx context.Context) []CheckResult {
 	var results []CheckResult
 
 	// aiClient 为 nil 时标记 fatal（不 panic）
+	// ★ 预检语境（向导 Step 1）下这是常态：客户端要等 key/model 收集完才能建
+	// ⇒ 记 Skipped 而不是 Fatal，否则向导会在第 1 步就被自己的预检掐断。
 	if d.aiClient == nil {
 		results = append(results, CheckResult{
 			Category:   "API",
 			Name:       "AI Client",
-			Severity:   SeverityFatal,
+			Severity:   d.unconfiguredSeverity(),
 			Message:    "not initialized",
 			FixSuggest: "check API key in environment or settings.json",
 		})
@@ -40,7 +42,7 @@ func (d *Doctor) checkAPI(ctx context.Context) []CheckResult {
 		results = append(results, CheckResult{
 			Category:   "API",
 			Name:       "Connectivity",
-			Severity:   SeverityFatal,
+			Severity:   d.unconfiguredSeverity(),
 			Message:    "skipped (API key not set)",
 			FixSuggest: "set ANTHROPIC_API_KEY or OPENAI_API_KEY env var, or api_key in settings.json",
 		})
@@ -56,7 +58,7 @@ func (d *Doctor) checkAPI(ctx context.Context) []CheckResult {
 		results = append(results, CheckResult{
 			Category:   "API",
 			Name:       "Connectivity",
-			Severity:   SeverityFatal,
+			Severity:   d.unconfiguredSeverity(),
 			Message:    "skipped (model not set)",
 			FixSuggest: "set model in settings.json or WHALE_MODEL environment variable",
 		})

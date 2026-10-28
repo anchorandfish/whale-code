@@ -76,9 +76,10 @@ func (d *Doctor) renderCategory(category string, items []CheckResult) string {
 	return sb.String()
 }
 
-// renderSummary 渲染底部汇总统计（fatal/errors/warnings/ok 计数）。
+// renderSummary 渲染底部汇总统计（fatal/errors/warnings/ok/skipped 计数）。
+// skipped 只在 >0 时出现，避免已配置用户的输出里多出一条恒为 0 的噪声。
 func (d *Doctor) renderSummary(results []CheckResult) string {
-	var fatal, warn, errCount, ok int
+	var fatal, warn, errCount, ok, skipped int
 	for _, r := range results {
 		switch r.Severity {
 		case SeverityFatal:
@@ -87,6 +88,8 @@ func (d *Doctor) renderSummary(results []CheckResult) string {
 			errCount++
 		case SeverityWarn:
 			warn++
+		case SeveritySkipped:
+			skipped++
 		case SeverityOK:
 			ok++
 		}
@@ -100,6 +103,9 @@ func (d *Doctor) renderSummary(results []CheckResult) string {
 	}
 	if warn > 0 {
 		parts = append(parts, fmt.Sprintf("%d warnings", warn))
+	}
+	if skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", skipped))
 	}
 	parts = append(parts, fmt.Sprintf("%d ok", ok))
 	return fmt.Sprintf("Summary: %s\n", strings.Join(parts, ", "))

@@ -1366,7 +1366,12 @@ func loadConfigWithOnboarding(allowOnboarding bool) *config.Config {
 		} else {
 			// 真正的新用户，执行 4 步骤交互式 Onboarding
 			settingsPath := filepath.Join(whalehome.Dir(), "settings.json")
-			doc := doctor.NewDoctor(nil, nil, cwd, settingsPath)
+			// ★ 必须用预检语境（ModePreflight）。Step 1 时 key/model 尚未收集
+			// （它们分别在 Step 2/3 才填），而完整体检语义会把"还没填"判成 FATAL
+			// ⇒ HasFatal 为真 ⇒ 向导在自己的第一步就被掐断、下面 exit 1 ——
+			// 全新机器永远进不来（2026-10-28 实测三场景复现）。
+			// 守卫：onboarding_fresh_install_test.go（走真实二进制，不直调 step 函数）。
+			doc := doctor.NewDoctor(nil, nil, cwd, settingsPath).WithMode(doctor.ModePreflight)
 			ob := onboarding.NewOnboarding(nil, doc, cwd, homeDir)
 			completed, obErr := ob.Run(context.Background())
 			if obErr != nil || !completed {

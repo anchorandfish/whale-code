@@ -21,6 +21,32 @@ func NewDoctor(cfg *config.Config, aiClient ai.Client, workDir, settingsPath str
 	}
 }
 
+// WithMode 返回一份注入了诊断语境的副本（不修改接收者，可安全并发使用）。
+//
+// 设计成"派生新实例"而不是"设置字段后跑完再改回来"，是因为 Run 内部有并行检查，
+// 就地改写字段会在语义上引入一道"跑的时候别读"的隐式约定。
+func (d *Doctor) WithMode(m Mode) *Doctor {
+	nd := *d
+	nd.mode = m
+	return &nd
+}
+
+// unconfiguredSeverity 返回「配置项尚未填写」在当前语境下的严重度。
+//
+// ★ 这是本包唯一一处由**语境**决定严重度的地方，也是"体检 vs 预检"的分界线：
+// - ModeDiagnose：用户声称已经配好 ⇒ 缺 key/model 说明配置坏了 ⇒ Fatal
+// - ModePreflight：还没开始配 ⇒ 缺它们只是"还测不了" ⇒ Skipped（不阻塞）
+//
+// ⚠️ 不要把这里改成无条件返回 SeveritySkipped：那样 /doctor 与 --check-api
+// 就再也无法告诉用户"你到底缺什么"了。守卫见
+// onboarding_fresh_install_test.go 的 TestDoctor_UnconfiguredStillFatalInDiagnoseContext。
+func (d *Doctor) unconfiguredSeverity() Severity {
+	if d.mode == ModePreflight {
+		return SeveritySkipped
+	}
+	return SeverityFatal
+}
+
 // Run 执行所有检测项并返回结果列表。
 // 检测顺序：环境（无依赖）→ 配置 → 依赖 → 平台特定 → 数据完整性 → 多实例锁 → 资源 → 网络连通性 → API 连通性 → 更新检查。
 // 对标同类 CLI getDoctorDiagnostic + checkContextWarnings 的并发采集。

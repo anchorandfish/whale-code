@@ -7,14 +7,13 @@ import (
 )
 
 // 本文件钉住「面向模型的 schema 投影」语义（P0-2）。
-// 对照实现：同类 CLI 的 tool schema 压缩（业内既有做法；按 门口径不引竞品源码路径）
-// MAX_COMPACT_TOOL_SCHEMA_BYTES = 4_000 / MAX_COMPACT_TOOL_SCHEMA_DEPTH = 3
-// 渐进降损的 pass 顺序 = 去描述 → 丢 $defs → 折叠深层对象 → 剪组合关键字
+// 契约：预算 = MaxModelSchemaBytes（4000 字节）/ 嵌套上限 = MaxModelSchemaDepth（3 层）；
+// 降损档位顺序 = 抹描述 → 内联本地引用并清根定义表 → 限嵌套深度 → 去组合分支。
 //
 // ★ 最关键的一条不变量：**投影绝不修改 schema 本体**。
-// 本体（spec.InputSchema）同时被 SchemaValidateStage 用于校验模型参数
-// （internal/tools/pipeline.go:610）。若投影就地改了本体，模型按残缺 schema
-// 传参就会被 server / 校验层拒掉 —— 这是"省 token"变成"功能坏掉"的经典路径。
+//   本体（spec.InputSchema）同时被 SchemaValidateStage 用于校验模型参数
+//   （internal/tools/pipeline.go:610）。若投影就地改了本体，模型按残缺 schema
+//   传参就会被 server / 校验层拒掉 —— 这是"省 token"变成"功能坏掉"的经典路径。
 
 func marshalLen(t *testing.T, v interface{}) int {
 	t.Helper()
