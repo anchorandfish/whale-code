@@ -106,11 +106,21 @@ func bestHandledAccess() (uint64, bool) {
 	return 0, false
 }
 
+// landlockRulesetAttrSize 是传给 landlock_create_ruleset 的 attr 长度：只取首字段。
+//
+// 为什么不传整个结构体：x/sys 0.49.0 起 LandlockRulesetAttr 从 3 字段（24B）扩到
+// 6 字段（48B，多出 handled_access_net / quiet_*）。内核的规则是「size 不得大于
+// **本内核认识**的 struct 大小」，老内核（Landlock ABI v1–v3）收到 48B 会回 E2BIG，
+// 于是探测失败 ⇒ bestHandledAccess 返回 ok=false ⇒ 沙箱静默降级为无沙箱。
+// 只传 8B（handled_access_fs）时，内核把其余字段按 0 补齐，对所有 ABI 都合法，
+// 且语义与旧版一致（旧版另两个字段本来就一直是 0）。
+const landlockRulesetAttrSize = unsafe.Sizeof(unix.LandlockRulesetAttr{}.Handled_access_fs)
+
 // tryCreateRuleset 尝试以 handled 权限集创建 ruleset（立即关闭，仅探测）。
 func tryCreateRuleset(handled uint64) bool {
-	attr := unix.LandlockRulesetAttr{Access_fs: handled}
+	attr := unix.LandlockRulesetAttr{Handled_access_fs: handled}
 	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET,
-		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+		uintptr(unsafe.Pointer(&attr)), landlockRulesetAttrSize, 0)
 	if errno != 0 {
 		return false
 	}
@@ -218,9 +228,9 @@ func applyLandlockSpec(spec *LandlockSpec) error {
 		return errors.New("landlock: kernel does not support landlock")
 	}
 
-	attr := unix.LandlockRulesetAttr{Access_fs: handled}
+	attr := unix.LandlockRulesetAttr{Handled_access_fs: handled}
 	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET,
-		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+		uintptr(unsafe.Pointer(&attr)), landlockRulesetAttrSize, 0)
 	if errno != 0 {
 		return fmt.Errorf("landlock: create ruleset: %w", errno)
 	}
